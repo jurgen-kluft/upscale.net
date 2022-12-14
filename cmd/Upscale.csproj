@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultItems>false</EnableDefaultItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Upscale.cs" />
+    <Compile Include="RunCmd.cs" />
+    <Compile Include="DryRunCmd.cs" />
+    <Compile Include="Transform.cs" />
+    <Compile Include="Vars.cs" />
+    <Compile Include="Config.cs" />
+  </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    </ItemGroup>
+
+</Project>
