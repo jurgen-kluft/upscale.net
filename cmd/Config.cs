@@ -13,19 +13,19 @@ namespace Config
 
     public class TextureConfig
     {
-        public class ToolsConfig
+        public class ProcessConfig
         {
             [JsonPropertyName("name")]
             public string Name { get; set; }
 
             [JsonPropertyName("vars")]
-            public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
+            public Dictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
         }
 
         [JsonPropertyName("vars")]
-        public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
-        [JsonPropertyName("tools")]
-        public IReadOnlyList<ToolsConfig> Tools { get; set; } = new List<ToolsConfig>();
+        public Dictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
+        [JsonPropertyName("processes")]
+        public List<ProcessConfig> Processes { get; set; } = new List<ProcessConfig>();
 
         public TextureConfig()
         {
@@ -48,6 +48,28 @@ namespace Config
             }
             config = _default;
             return false;
+        }
+
+        public void MergeIntoVars(Vars.Vars vars, bool overwrite)
+        {
+            foreach (var item in Vars)
+            {
+                vars.Add(item.Key, item.Value, overwrite);
+            }
+        }
+
+        public void MergeIntoProcessVars(string processName, Vars.Vars vars, bool overwrite)
+        {
+            foreach (var process in Processes)
+            {
+                if (process.Name == processName)
+                {
+                    foreach (var item in process.Vars)
+                    {
+                        vars.Add(item.Key, item.Value, overwrite);
+                    }
+                }
+            }
         }
     }
 

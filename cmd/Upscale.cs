@@ -93,12 +93,25 @@ namespace Upscale
 
             var inputFilesJob = inputFiles.Skip(inputFilesStart).Take(inputFilesEnd - inputFilesStart).ToList();
 
-            foreach (var inputFile in inputFilesJob)
+            foreach (var currentInputFilePath in inputFilesJob)
             {
-                // Figure out if there is a 'inputFile'.json file next to the 'inputFile' file.
+                // Figure out if there is a 'currentInputFilePath'.json file next to the 'currentInputFilePath' file.
                 // If so we need to load/parse that JSON file and use the data in it to override the default settings.
+                if (Config.TextureConfig.ReadJson(currentInputFilePath+".json", out var currentTextureConfig) == false)
+                {
+                    return -1;
+                }
 
-                var pipeline = new Transform.Pipeline(paths, processes, transforms, vars);
+                Vars.Vars localVars = new(vars);
+                globalTextureConfig.MergeIntoVars(localVars, false);
+                currentTextureConfig.MergeIntoVars(localVars, true);
+
+                string transform = localVars.ResolveString("transform");
+                transforms.GetTransformByName(transform, out var transformConfig);
+
+                // Run the pipeline
+                var pipeline = new Transform.Pipeline(paths, processes, transformConfig, localVars);
+                pipeline.Execute(currentInputFilePath, dryrun);
             }
 
             return 0;

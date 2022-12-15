@@ -4,6 +4,17 @@ public class Vars
 {
     private readonly Dictionary<string, string> _vars = new();
 
+    public Vars(Vars vars = null)
+    {
+        if (vars != null)
+        {
+            foreach (var item in vars._vars)
+            {
+                _vars.Add(item.Key, item.Value);
+            }
+        }
+    }
+
     public bool Exists(string name)
     {
         return _vars.ContainsKey(name);
@@ -28,9 +39,9 @@ public class Vars
         return false;
     }
 
-    public bool Add(string name, string value)
+    public bool Add(string name, string value, bool overwrite = false)
     {
-        if (_vars.ContainsKey(name)) return false;
+        if (!overwrite && _vars.ContainsKey(name)) return false;
         _vars.Add(name, value);
         return true;
     }

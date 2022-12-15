@@ -71,9 +71,8 @@ internal class Pipeline
         return stage;
     }
 
-    public void Execute(string fp)
+    public void Execute(string fp, bool dryrun)
     {
-
         // Prepare the variables for the pipeline
         _vars.Add("input.path", _folders.InputPath);
         _vars.Add("output.path", _folders.OutputPath);
