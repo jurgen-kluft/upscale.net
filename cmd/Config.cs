@@ -3,6 +3,54 @@ using System.Text.Json.Serialization;
 
 namespace Config
 {
+    public struct Paths
+    {
+        public string ToolsPath { get; set; }
+        public string CachePath { get; set; }
+        public string InputPath { get; set; }
+        public string OutputPath { get; set; }
+    }
+
+    public class TextureConfig
+    {
+        public class ToolsConfig
+        {
+            [JsonPropertyName("name")]
+            public string Name { get; set; }
+
+            [JsonPropertyName("vars")]
+            public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
+        }
+
+        [JsonPropertyName("vars")]
+        public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
+        [JsonPropertyName("tools")]
+        public IReadOnlyList<ToolsConfig> Tools { get; set; } = new List<ToolsConfig>();
+
+        public TextureConfig()
+        {
+        }
+
+        private static readonly TextureConfig _default = new TextureConfig();
+        public static bool ReadJson(string path, out TextureConfig config)
+        {
+            if (File.Exists(path))
+            {
+                try
+                {
+                    var jsonString = File.ReadAllText(path);
+                    config = JsonSerializer.Deserialize<TextureConfig>(jsonString);
+                    return true;
+                }
+                catch (Exception)
+                {
+                }
+            }
+            config = _default;
+            return false;
+        }
+    }
+
     public class Process
     {
         [JsonPropertyName("name")]
@@ -12,18 +60,18 @@ namespace Config
         [JsonPropertyName("path")]
         public string Path { get; set; }
         [JsonPropertyName("package")]
-        public List<string> Package { get; set; } = new ();
-
-        [JsonPropertyName("vars")] public Dictionary<string, string> Vars { get; set; } = new();
+        public IReadOnlyList<string> Package { get; set; } = new List<string>();
+        [JsonPropertyName("vars")]
+        public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
     }
 
     public class Processes
     {
         [JsonPropertyName("processes")]
-        public List<Process> ProcessList { get; set; } = new();
+        public IReadOnlyList<Process> ProcessList { get; set; } = new List<Process>();
 
         [JsonIgnore]
-        public Dictionary<string, Process> ProcessMap { get; private set; }
+        public Dictionary<string, Process> ProcessMap { get; private set; } = new();
 
         bool GetProcessByName(string name, out Process process)
         {
@@ -64,7 +112,7 @@ namespace Config
         public string Thread { get; set; }
 
         [JsonPropertyName("vars")]
-        public Dictionary<string, string> Vars { get; set; } = new();
+        public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
 
         [JsonPropertyName("process")]
         public string Process { get; set; }
@@ -79,7 +127,7 @@ namespace Config
     public class Transforms
     {
         [JsonPropertyName("transforms")]
-        public List<Transform> TransformsList { get; set; } = new ();
+        public IReadOnlyList<Transform> TransformsList { get; set; } = new List<Transform>();
 
         public bool GetTransformByName(string name, out Transform transform)
         {
@@ -118,7 +166,7 @@ namespace Config
     public class TransformStage
     {
         [JsonPropertyName("processes")]
-        public List<TransformProcess> Processes { get; } = new ();
+        public IReadOnlyList<TransformProcess> Processes { get; } = new List<TransformProcess>();
 
         [JsonPropertyName("name")]
         public string Name { get; set; }
@@ -130,7 +178,7 @@ namespace Config
         public string Name { get; set; }
 
         [JsonPropertyName("stages")]
-        public List<TransformStage> Stages { get; } = new ();
+        public IReadOnlyList<TransformStage> Stages { get; } = new List<TransformStage>();
     }
 
 }

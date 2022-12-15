@@ -1,6 +1,7 @@
 using System;
-using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Security.Cryptography;
 
 namespace FileTracker;
 
@@ -11,43 +12,111 @@ internal class Node
     public Dictionary<string, string> Files { get; set; }
 }
 
-public struct TrackerEnv
-{
-    public string ToolsPath { get; set; }
-    public string CachePath { get; set; }
-    public string InputPath { get; set; }
-    public string OutputPath { get; set; }
-}
-
 public class Tracker
 {
     private Dictionary<string, string> _paths = new();
     private Dictionary<string, Node> _nodes = new();
 
-    public Tracker(TrackerEnv env)
+    private bool _hashContent = false;
+    private static SHA1 _hashAlgorithm;
+
+    public Tracker(Config.Paths paths, bool hashContent = false)
     {
-        SetEnv(env);
+        SetPaths(paths);
+        _hashContent = hashContent;
+        _hashAlgorithm = SHA1.Create();
     }
 
-    public void SetEnv(TrackerEnv env)
+    private void SetPaths(Config.Paths paths)
     {
         _paths.Clear();
-        _paths.Add("tools.path:", env.ToolsPath);
-        _paths.Add("input.path:", env.InputPath);
-        _paths.Add("cache.path:", env.CachePath);
-        _paths.Add("output.path:", env.OutputPath);
+        _paths.Add("{tools.path}", paths.ToolsPath);
+        _paths.Add("{input.path}", paths.InputPath);
+        _paths.Add("{cache.path}", paths.CachePath);
+        _paths.Add("{output.path}", paths.OutputPath);
+    }
+
+    private static string IncreaseIndent(string indent)
+    {
+        return string.Concat(indent, "    ");
+    }
+    private static string DecreaseIndent(string indent)
+    {
+        return indent.Substring(0, indent.Length - 4);
     }
 
     public void Save(string filepath)
     {
-        // Save the array of nodes to a file
+        if (File.Exists(filepath))
+        {
+            File.Delete(filepath);
+        }
 
+        using var w = new StreamWriter(filepath);
+        string indent = "    ";
+        w.WriteLine("{");
+        w.WriteLine($"{indent}\"nodes\": [");
+        indent = IncreaseIndent(indent);
+        foreach (var node in _nodes.Values)
+        {
+            w.WriteLine($"{indent}{{");
+            indent = IncreaseIndent(indent);
+            w.WriteLine($"{indent}\"name\": \"{node.Name}\",");
+            w.WriteLine($"{indent}\"items\": [");
+            indent = IncreaseIndent(indent);
+            foreach (var item in node.Items)
+            {
+                w.WriteLine($"{indent}{{");
+                indent = IncreaseIndent(indent);
+                w.WriteLine($"{indent}\"name\": \"{item.Key}\",");
+                w.WriteLine($"{indent}\"hash\": \"{item.Value}\"");
+                indent = DecreaseIndent(indent);
+                w.WriteLine($"{indent}}},");
+            }
+            indent = DecreaseIndent(indent);
+            w.WriteLine($"{indent}],");
+            w.WriteLine($"{indent}\"files\": [");
+            indent = IncreaseIndent(indent);
+            foreach (var file in node.Files)
+            {
+                w.WriteLine($"{indent}{{");
+                indent = IncreaseIndent(indent);
+                w.WriteLine($"{indent}\"name\": \"{file.Key}\",");
+                w.WriteLine($"{indent}\"hash\": \"{file.Value}\"");
+                indent = DecreaseIndent(indent);
+                w.WriteLine($"{indent}}},");
+            }
+            indent = DecreaseIndent(indent);
+            w.WriteLine($"{indent}]");
+            indent = DecreaseIndent(indent);
+            w.WriteLine($"{indent}}},");
+        }
+        indent = DecreaseIndent(indent);
+        w.WriteLine($"{indent}]");
+        w.WriteLine("}");
+
+        w.Flush();
+        w.Close();     
     }
 
     public void Load(string filepath)
     {
-        // Load the array of nodes from a file
+        // Check if the file exists before trying to load and parse it
+        if (!File.Exists(filepath))
+        {
+            return;
+        }
 
+        // Load the array of nodes from a file using System.Text.Json
+        using var r = new StreamReader(filepath);
+        var json = r.ReadToEnd();
+        var nodes = JsonSerializer.Deserialize<List<Node>>(json);
+        _nodes.Clear();
+        foreach (var node in nodes)
+        {
+            _nodes.Add(node.Name, node);
+        }
+        r.Close();
     }
 
     internal Node FindNode(string name)
@@ -137,50 +206,105 @@ public class Tracker
         }
     }
 
-    public void Update()
+    private static string ComputeHashOfFile(string filepath)
+    {
+        // Compute a SHA1 hash of some of the file properties:
+        // - file size
+        // - file last write time
+
+        FileInfo fi = new(filepath);
+        if (!fi.Exists)
+        {
+            return "0000000000000000000000000000000000000000";
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(string.Concat(fi.Length, fi.LastWriteTimeUtc));
+        var hash = _hashAlgorithm.ComputeHash(bytes);
+        return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+    }
+
+    private static string ComputeHashOfFileContent(string filepath)
+    {
+        // Compute a SHA1 hash of the file content
+        FileInfo fi = new(filepath);
+        if (!fi.Exists)
+        {
+            return "0000000000000000000000000000000000000000";
+        }
+
+        using (var stream = File.OpenRead(filepath))
+        {
+            var hash = _hashAlgorithm.ComputeHash(stream);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+    }
+
+    // Update; update all the nodes and its files and items and return the list of node (names) that have changed
+    public List<string> Update()
     {
         // For each node compute a hash of the files and items
         // Then update the Items["hash"] with the hash value
 
+        List<string> changedNodes = new();
+
         foreach (var node in _nodes.Values)
         {
-            var hash = new StringBuilder();
+            var nodeHash = new StringBuilder();
 
             List<string> sortedFilenames = new(node.Files.Keys);
-            foreach (var file in _nodes.Keys)
+            foreach (var file in node.Files)
             {
-                sortedFilenames.Add(file);
+                sortedFilenames.Add(file.Key);
             }
             sortedFilenames.Sort();
             foreach (var file in sortedFilenames)
             {
-                var n = _nodes[file];
-                hash.Append(node.Name);
-                hash.Append(file);
+                if (_hashContent)
+                {
+                    string contentHash = ComputeHashOfFileContent(file);
+                }
+                else
+                {
+                    string propertiesHash = ComputeHashOfFile(file);
+                }
             }
 
-            // Note: We do not include the item "hash" here since we
-            //       are recomputing it.
+            foreach (var fileName in sortedFilenames)
+            {
+                var fileHash = node.Files[fileName];
+                nodeHash.Append(fileName);
+                nodeHash.Append(fileHash);
+            }
+
+            // Note: We do not include the item "node.hash" here since we are recomputing it.
             List<string> sortedItems = new(node.Items.Keys);
             foreach (var item in node.Items)
             {
-                if (item.Key == "hash") continue;
+                if (item.Key == "node.hash") continue;
                 sortedItems.Add(item.Key);
             }
             foreach (var item in sortedItems)
             {
                 var value = node.Items[item];
-                hash.Append(item);
-                hash.Append(value);
+                nodeHash.Append(item);
+                nodeHash.Append(value);
             }
 
             // Generate a SHA1 hash from the build up string
             using var sha1 = SHA1.Create();
-            var hashBytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(hash.ToString()));
+            var hashBytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(nodeHash.ToString()));
 
-            node.Items["hash"] = hash.ToString();
+            if (!node.Items.TryGetValue("node.hash", out string oldNodeHashStr))
+            {
+               oldNodeHashStr = "0000000000000000000000000000000000000000";
+            }
+            string newNodeHashStr = nodeHash.ToString();
+            if (newNodeHashStr != oldNodeHashStr)
+            {
+                node.Items["node.hash"] = newNodeHashStr;
+                changedNodes.Add(node.Name);
+            }
         }
-
+        return changedNodes;
     }
-
 }

@@ -11,8 +11,6 @@
 
   <ItemGroup>
     <Compile Include="Upscale.cs" />
-    <Compile Include="RunCmd.cs" />
-    <Compile Include="DryRunCmd.cs" />
     <Compile Include="Transform.cs" />
     <Compile Include="FileTracker.cs" />
     <Compile Include="Vars.cs" />

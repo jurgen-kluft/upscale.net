@@ -24,7 +24,6 @@ public class Vars
     public bool Find(string name, out string value)
     {
         if (_vars.TryGetValue(name, out value)) return true;
-
         value = string.Empty;
         return false;
     }
@@ -39,22 +38,30 @@ public class Vars
     public void Merge(Vars vars)
     {
         foreach (var v in vars._vars)
+        {
             if (_vars.ContainsKey(v.Key) == false)
+            {
                 _vars.Add(v.Key, v.Value);
+            }
+        }
     }
 
-    public void Merge(Dictionary<string, string> vars)
+    public void Merge(IReadOnlyDictionary<string, string> vars, bool overwrite = false)
     {
         foreach (var v in vars)
-            if (_vars.ContainsKey(v.Key) == false)
+        {
+            if (overwrite || _vars.ContainsKey(v.Key) == false)
+            {
                 _vars.Add(v.Key, v.Value);
+            }
+        }
     }
 
     public static bool ContainsVars(string text)
     {
         var ctx = new Context(text);
         var key = ctx.Search();
-        return key.IsValid();
+        return key.Valid;
     }
 
     public string ResolveString(string text)
@@ -65,8 +72,12 @@ public class Vars
             if (vars.Count == 0) break;
 
             foreach (var varName in vars)
+            {
                 if (_vars.TryGetValue(varName, out var varValue))
+                {
                     text = text.Replace($"{{{varName}}}", varValue);
+                }
+            }
         }
 
         return text;
@@ -74,17 +85,16 @@ public class Vars
 
     public static List<string> ExtractAllVars(string text)
     {
-        // Extract all variables from text using 'SearchInnerMostKey' method
+        // Extract all '{var}' variables from text
         var vars = new List<string>();
         var ctx = new Context(text);
 
         var key = ctx.Search();
-        while (key.IsValid())
+        while (key.Valid)
         {
             vars.Add(ctx.GetKey(key));
             key = ctx.Search();
         }
-
         return vars;
     }
 
@@ -92,13 +102,8 @@ public class Vars
 
     private struct Slice
     {
-        public int Start;
-        public int End;
-
-        public bool IsValid()
-        {
-            return Start >= 0 && End >= 0 && Start < End;
-        }
+        public int Start, End;
+        public bool Valid => Start >= 0 && End >= 0 && Start < End;
     }
 
     private struct Context
@@ -117,7 +122,7 @@ public class Vars
 
         public string GetKey(Slice s)
         {
-            return _text.Substring(s.Start, s.End - s.Start);
+            return _text[s.Start..s.End];
         }
 
         public Slice Search()
@@ -130,23 +135,26 @@ public class Vars
 
             while (_cursor < _text.Length)
             {
-                if (_text[_cursor] == '}')
+                switch (_text[_cursor])
                 {
-                    key_end = _cursor;
-                    _cursor++;
-                    if (_stack_top == 0)
-                        // this situation is not possible (we have a '}' without a '{')
-                        return new Slice { Start = -1, End = -1 };
-
-                    if (_stack_top > 0)
-                    {
-                        key_begin = _stack[--_stack_top];
-                        return new Slice { Start = key_begin + 1, End = key_end };
-                    }
-                }
-                else if (_text[_cursor] == '{')
-                {
-                    _stack[_stack_top++] = _cursor;
+                    case '}':
+                        {
+                            key_end = _cursor;
+                            _cursor++;
+                            if (_stack_top == 0)
+                            {   // this situation is not possible (we have a '}' without a '{')
+                                return new Slice { Start = -1, End = -1 };
+                            }
+                            if (_stack_top > 0)
+                            {
+                                key_begin = _stack[--_stack_top];
+                                return new Slice { Start = key_begin + 1, End = key_end };
+                            }
+                            break;
+                        }
+                    case '{':
+                        _stack[_stack_top++] = _cursor;
+                        break;
                 }
 
                 _cursor++;
