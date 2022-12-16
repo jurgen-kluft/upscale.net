@@ -190,13 +190,16 @@ public class Tracker
             return "0000000000000000000000000000000000000000";
         }
 
-        var bytes = Encoding.UTF8.GetBytes(string.Concat(fi.Length, fi.LastWriteTimeUtc));
-        var hash = _hashAlgorithm.ComputeHash(bytes);
+        List<byte> bytes = new (BitConverter.GetBytes(fi.Length));
+        bytes.AddRange(BitConverter.GetBytes(fi.LastWriteTimeUtc.Ticks));
+        var hash = _hashAlgorithm.ComputeHash(bytes.ToArray());
         return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
     }
 
     private static string ComputeHashOfFileContent(string filepath)
     {
+
+
         // Compute a SHA1 hash of the file content
         FileInfo fi = new(filepath);
         if (!fi.Exists)
@@ -220,28 +223,27 @@ public class Tracker
         {
             var nodeHash = new StringBuilder();
 
-            List<string> sortedFilenames = new(node.Files.Keys);
-            foreach (var file in node.Files)
+            List<string> sortedFilePaths = new(node.Files.Keys);
+            sortedFilePaths.Sort();
+            foreach (var filePath in sortedFilePaths)
             {
-                sortedFilenames.Add(file.Key);
-            }
-            sortedFilenames.Sort();
-            foreach (var file in sortedFilenames)
-            {
+                var fullFilePath = _vars.ResolvePath(filePath);
                 if (_hashContent)
                 {
-                    string contentHash = ComputeHashOfFileContent(file);
+                    var contentHash = ComputeHashOfFileContent(fullFilePath);
+                    node.Files[filePath] = contentHash;
                 }
                 else
                 {
-                    string propertiesHash = ComputeHashOfFile(file);
+                    var propertiesHash = ComputeHashOfFile(fullFilePath);
+                    node.Files[filePath] = propertiesHash;
                 }
             }
 
-            foreach (var fileName in sortedFilenames)
+            foreach (var filePath in sortedFilePaths)
             {
-                var fileHash = node.Files[fileName];
-                nodeHash.Append(fileName);
+                var fileHash = node.Files[filePath];
+                nodeHash.Append(filePath);
                 nodeHash.Append(fileHash);
             }
 
@@ -263,15 +265,12 @@ public class Tracker
             using var sha1 = SHA1.Create();
             var hashBytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(nodeHash.ToString()));
 
-            if (!node.Items.TryGetValue("node.hash", out string oldNodeHashStr))
+            if (!node.Items.TryGetValue("node.hash", out var oldNodeHashStr))
             {
                oldNodeHashStr = "0000000000000000000000000000000000000000";
             }
-            string newNodeHashStr = nodeHash.ToString();
-            if (newNodeHashStr != oldNodeHashStr)
-            {
-                node.Items["node.hash"] = newNodeHashStr;
-            }
+            var newNodeHashStr = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+            node.Items["node.hash"] = newNodeHashStr;
             nodeHashes.Add(node.Name, newNodeHashStr);
         }
     }

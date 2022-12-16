@@ -53,7 +53,7 @@ namespace Config
         [JsonPropertyName("vars")]
         public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
 
-        private static IEnumerable<string> Glob(string basePath, string path)
+        private static IEnumerable<string> Glob( string path)
         {
             // 'path' may contain a glob pattern, so we need to expand it
             // For example: 'path/to/**/*.png' will expand to all the png files in the 'path/to' folder and all subfolders
@@ -88,18 +88,22 @@ namespace Config
 
         public void ExpandPackagePaths(Vars.Vars vars)
         {
+            var toolsPath = vars.ResolvePath("{tools.path}");
+
             List<string> packageFiles = new();
             foreach (var relativePath in Package)
             {
-                var path = "{tools.path}" + relativePath;
+                var fullPath = Path.Join(toolsPath, relativePath);
+                fullPath = vars.ResolvePath(fullPath);
 
-                // Glob all files in 'path'
-                foreach (var filepath in Glob(path))
+                // Glob all files in 'fullPath'
+                foreach (var filepath in Glob(fullPath))
                 {
-                    packageFiles.Add(filepath);
+                    var relativeFilepath = filepath[(toolsPath.Length + 1)..];
+                    relativeFilepath = "{tools.path}/" + relativeFilepath;
+                    packageFiles.Add(relativeFilepath);
                 }
             }
-
             Package = packageFiles;
         }
     }
