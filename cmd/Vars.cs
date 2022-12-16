@@ -41,19 +41,24 @@ public class Vars
 
     public bool Add(string name, string value, bool overwrite = false)
     {
-        if (!overwrite && _vars.ContainsKey(name)) return false;
-        _vars.Add(name, value);
-        return true;
+        var exists = _vars.ContainsKey(name);
+        switch (overwrite)
+        {
+            case false when !exists:
+                _vars.Add(name, value);
+                break;
+            case true:
+                _vars[name] = value;
+                break;
+        }
+        return !exists || overwrite;
     }
 
-    public void Merge(Vars vars)
+    public void Merge(Vars vars, bool overwrite = false)
     {
         foreach (var v in vars._vars)
         {
-            if (_vars.ContainsKey(v.Key) == false)
-            {
-                _vars.Add(v.Key, v.Value);
-            }
+            Add(v.Key, v.Value, overwrite);
         }
     }
 
@@ -61,10 +66,7 @@ public class Vars
     {
         foreach (var v in vars)
         {
-            if (overwrite || _vars.ContainsKey(v.Key) == false)
-            {
-                _vars.Add(v.Key, v.Value);
-            }
+            Add (v.Key, v.Value, overwrite);
         }
     }
 
@@ -94,6 +96,13 @@ public class Vars
         return text;
     }
 
+    public string ResolvePath(string path)
+    {
+        var p = ResolveString(path);
+        p = Environment.ExpandEnvironmentVariables(p);
+        return p;
+    }
+
     public static List<string> ExtractAllVars(string text)
     {
         // Extract all '{var}' variables from text
@@ -120,7 +129,7 @@ public class Vars
     private struct Context
     {
         private readonly int[] _stack = new int[8];
-        private int _stack_top;
+        private int _stackTop;
         private int _cursor;
         private readonly string _text;
 
@@ -128,7 +137,7 @@ public class Vars
         {
             _text = str;
             _cursor = 0;
-            _stack_top = 0;
+            _stackTop = 0;
         }
 
         public string GetKey(Slice s)
@@ -141,8 +150,8 @@ public class Vars
             // a key is delimited by '{' and '}' and can be nested
             // e.g. "uprez.esr.model={esrgan.model.{input.filename}}"
 
-            var key_begin = -1;
-            var key_end = -1;
+            var keyBegin = -1;
+            var keyEnd = -1;
 
             while (_cursor < _text.Length)
             {
@@ -150,30 +159,28 @@ public class Vars
                 {
                     case '}':
                         {
-                            key_end = _cursor;
+                            keyEnd = _cursor;
                             _cursor++;
-                            if (_stack_top == 0)
-                            {   // this situation is not possible (we have a '}' without a '{')
-                                return new Slice { Start = -1, End = -1 };
-                            }
-                            if (_stack_top > 0)
+                            switch (_stackTop)
                             {
-                                key_begin = _stack[--_stack_top];
-                                return new Slice { Start = key_begin + 1, End = key_end };
+                                case 0: // this situation is not possible (we have a '}' without a '{')
+                                    return new Slice { Start = -1, End = -1 };
+                                case > 0:
+                                    keyBegin = _stack[--_stackTop];
+                                    return new Slice { Start = keyBegin + 1, End = keyEnd };
                             }
+
                             break;
                         }
                     case '{':
-                        _stack[_stack_top++] = _cursor;
+                        _stack[_stackTop++] = _cursor;
                         break;
                 }
 
                 _cursor++;
             }
 
-            if (key_begin == -1) return new Slice { Start = -1, End = -1 };
-
-            return new Slice { Start = key_begin, End = key_end };
+            return new Slice { Start = -1, End = -1 };
         }
     }
 }

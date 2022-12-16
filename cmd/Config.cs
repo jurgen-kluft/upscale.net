@@ -1,19 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-
+using System.IO;
 namespace Config
 {
-    public struct Paths
+    public class TextureSettings
     {
-        public string ToolsPath { get; set; }
-        public string CachePath { get; set; }
-        public string InputPath { get; set; }
-        public string OutputPath { get; set; }
-    }
-
-    public class TextureConfig
-    {
-        public class ProcessConfig
+        public class ProcessSettings
         {
             [JsonPropertyName("name")]
             public string Name { get; set; }
@@ -25,28 +17,28 @@ namespace Config
         [JsonPropertyName("vars")]
         public Dictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
         [JsonPropertyName("processes")]
-        public List<ProcessConfig> Processes { get; set; } = new List<ProcessConfig>();
+        public List<ProcessSettings> Processes { get; set; } = new List<ProcessSettings>();
 
-        public TextureConfig()
+        public TextureSettings()
         {
         }
 
-        private static readonly TextureConfig _default = new TextureConfig();
-        public static bool ReadJson(string path, out TextureConfig config)
+        private static readonly TextureSettings _default = new TextureSettings();
+        public static bool ReadJson(string path, out TextureSettings settings)
         {
             if (File.Exists(path))
             {
                 try
                 {
                     var jsonString = File.ReadAllText(path);
-                    config = JsonSerializer.Deserialize<TextureConfig>(jsonString);
+                    settings = JsonSerializer.Deserialize<TextureSettings>(jsonString);
                     return true;
                 }
                 catch (Exception)
                 {
                 }
             }
-            config = _default;
+            settings = _default;
             return false;
         }
 
@@ -80,11 +72,62 @@ namespace Config
         [JsonPropertyName("description")]
         public string Description { get; set; }
         [JsonPropertyName("path")]
-        public string Path { get; set; }
+        public string ExecutablePath { get; set; }
         [JsonPropertyName("package")]
         public IReadOnlyList<string> Package { get; set; } = new List<string>();
         [JsonPropertyName("vars")]
         public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
+
+        private static IEnumerable<string> Glob(string path)
+        {
+            // 'path' may contain a glob pattern, so we need to expand it
+            // For example: 'path/to/**/*.png' will expand to all the png files in the 'path/to' folder and all subfolders
+
+            // If the path does not contain a glob pattern, then just return the path
+            if (path.Contains('*') == false)
+            {
+                return new List<string>() { path };
+            }
+
+            // If the path contains a glob pattern, then expand it
+            var dir = Path.GetDirectoryName(path);
+            var pattern = Path.GetFileName(path);
+
+            // Deal with '**' in 'dir'
+            bool recursive = false;
+            if (dir.EndsWith("**"))
+            {
+                recursive = true;
+                dir = dir.Substring(0, dir.Length - 2);
+            }
+
+            // Make sure the directory exists before trying to glob
+            if (Directory.Exists(dir) == false)
+            {
+                return new List<string>();
+            }
+
+            // Enumerate all the files
+            var files = Directory.EnumerateFiles(dir, pattern, recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
+
+            // Return the files
+            return files;
+        }
+
+        public void ExpandPackagePaths(Vars.Vars vars)
+        {
+            List<string> packageFiles = new();
+            foreach (var path in Package)
+            {
+                // Glob all files in 'path'
+                foreach (var filepath in Glob(vars.ResolvePath(path)))
+                {
+                    packageFiles.Add(filepath);
+                }
+            }
+
+            Package = packageFiles;
+        }
     }
 
     public class Processes
@@ -100,7 +143,7 @@ namespace Config
             return ProcessMap.TryGetValue(name, out process);
         }
 
-        public static bool ReadJson(string path, out Processes processes)
+        public static bool ReadJson(string path, Vars.Vars vars, out Processes processes)
         {
             if (File.Exists(path) == false)
             {
@@ -120,6 +163,8 @@ namespace Config
             jsonModel.ProcessMap = new Dictionary<string, Process>();
             foreach (var process in jsonModel.ProcessList)
             {
+                // Each process contains a list of 'paths' that can contain glob patterns, we need to expand those
+                process.ExpandPackagePaths(vars);
                 jsonModel.ProcessMap.Add(process.Name, process);
             }
             processes = jsonModel;
@@ -187,11 +232,10 @@ namespace Config
 
     public class TransformStage
     {
-        [JsonPropertyName("processes")]
-        public IReadOnlyList<TransformProcess> Processes { get; } = new List<TransformProcess>();
-
         [JsonPropertyName("name")]
         public string Name { get; set; }
+        [JsonPropertyName("processes")]
+        public IReadOnlyList<TransformProcess> Processes { get; set; } = new List<TransformProcess>();
     }
 
     public class Transform
@@ -200,7 +244,7 @@ namespace Config
         public string Name { get; set; }
 
         [JsonPropertyName("stages")]
-        public IReadOnlyList<TransformStage> Stages { get; } = new List<TransformStage>();
+        public IReadOnlyList<TransformStage> Stages { get; set; } = new List<TransformStage>();
     }
 
 }

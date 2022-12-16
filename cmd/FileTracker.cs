@@ -1,8 +1,3 @@
-using System;
-using System.Text;
-using System.Text.Json;
-using System.Security.Cryptography;
-
 namespace FileTracker;
 
 internal class Node
@@ -20,20 +15,22 @@ public class Tracker
     private bool _hashContent = false;
     private static SHA1 _hashAlgorithm;
 
-    public Tracker(Config.Paths paths, bool hashContent = false)
+    public Tracker(Vars.Vars vars, bool hashContent = false)
     {
-        SetPaths(paths);
+        SetPaths(vars);
         _hashContent = hashContent;
         _hashAlgorithm = SHA1.Create();
     }
 
-    private void SetPaths(Config.Paths paths)
+    private void SetPaths(Vars.Vars vars)
     {
         _paths.Clear();
-        _paths.Add("{tools.path}", paths.ToolsPath);
-        _paths.Add("{input.path}", paths.InputPath);
-        _paths.Add("{cache.path}", paths.CachePath);
-        _paths.Add("{output.path}", paths.OutputPath);
+        var pathVars = new [] { "input.path", "output.path", "tools.path", "cache.path" };
+        foreach (var pathVar in pathVars)
+        {
+            vars.Get(pathVar, out var path);
+            _paths.Add($"{pathVar}", path);
+        }
     }
 
     private static string IncreaseIndent(string indent)
@@ -96,7 +93,7 @@ public class Tracker
         w.WriteLine("}");
 
         w.Flush();
-        w.Close();     
+        w.Close();
     }
 
     public void Load(string filepath)

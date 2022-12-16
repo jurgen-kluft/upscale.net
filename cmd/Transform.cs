@@ -40,16 +40,14 @@ internal class Process
 
 internal class Pipeline
 {
-    private Config.Paths _folders;
     private Config.Processes _processes; // All the processes that are available
     private Config.Transform _transform; // The transform of this pipeline
     private Vars.Vars _vars; // The variables for this pipeline
     private Stage _stage; // The current stage of the pipeline
     private List<Stage> _stages; // The stages of the pipeline
 
-    public Pipeline(Config.Paths folders, Config.Processes processes, Config.Transform transform, Vars.Vars vars)
+    public Pipeline(Config.Processes processes, Config.Transform transform, Vars.Vars vars)
     {
-        _folders = folders;
         _processes = processes;
         _transform = transform;
         _vars = vars;
@@ -74,11 +72,6 @@ internal class Pipeline
     public void Execute(string fp, bool dryrun)
     {
         // Prepare the variables for the pipeline
-        _vars.Add("input.path", _folders.InputPath);
-        _vars.Add("output.path", _folders.OutputPath);
-        _vars.Add("cache.path", _folders.CachePath);
-        _vars.Add("tools.path", _folders.ToolsPath);
-
         _vars.Add("transform.input", "{inputpath}/" + fp);
         _vars.Add("transform.output", "{outputpath}/" + fp);
 

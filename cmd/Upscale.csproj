@@ -15,6 +15,7 @@
     <Compile Include="FileTracker.cs" />
     <Compile Include="Vars.cs" />
     <Compile Include="Config.cs" />
+    <Compile Include="Usings.cs" />
   </ItemGroup>
 
     <ItemGroup>
