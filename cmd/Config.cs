@@ -5,19 +5,8 @@ namespace Config
 {
     public class TextureSettings
     {
-        public class ProcessSettings
-        {
-            [JsonPropertyName("name")]
-            public string Name { get; set; }
-
-            [JsonPropertyName("vars")]
-            public Dictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
-        }
-
         [JsonPropertyName("vars")]
-        public Dictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
-        [JsonPropertyName("processes")]
-        public List<ProcessSettings> Processes { get; set; } = new List<ProcessSettings>();
+        public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
 
         public TextureSettings()
         {
@@ -49,36 +38,22 @@ namespace Config
                 vars.Add(item.Key, item.Value, overwrite);
             }
         }
-
-        public void MergeIntoProcessVars(string processName, Vars.Vars vars, bool overwrite)
-        {
-            foreach (var process in Processes)
-            {
-                if (process.Name == processName)
-                {
-                    foreach (var item in process.Vars)
-                    {
-                        vars.Add(item.Key, item.Value, overwrite);
-                    }
-                }
-            }
-        }
     }
 
-    public class Process
+    public class ProcessDescriptor
     {
         [JsonPropertyName("name")]
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
         [JsonPropertyName("description")]
-        public string Description { get; set; }
+        public string Description { get; set; } = string.Empty;
         [JsonPropertyName("path")]
-        public string ExecutablePath { get; set; }
+        public string ExecutablePath { get; set; } = string.Empty;
         [JsonPropertyName("package")]
         public IReadOnlyList<string> Package { get; set; } = new List<string>();
         [JsonPropertyName("vars")]
         public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
 
-        private static IEnumerable<string> Glob(string path)
+        private static IEnumerable<string> Glob(string basePath, string path)
         {
             // 'path' may contain a glob pattern, so we need to expand it
             // For example: 'path/to/**/*.png' will expand to all the png files in the 'path/to' folder and all subfolders
@@ -94,11 +69,11 @@ namespace Config
             var pattern = Path.GetFileName(path);
 
             // Deal with '**' in 'dir'
-            bool recursive = false;
+            var recursive = false;
             if (dir.EndsWith("**"))
             {
                 recursive = true;
-                dir = dir.Substring(0, dir.Length - 2);
+                dir = dir[..^2];
             }
 
             // Make sure the directory exists before trying to glob
@@ -108,19 +83,18 @@ namespace Config
             }
 
             // Enumerate all the files
-            var files = Directory.EnumerateFiles(dir, pattern, recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
-
-            // Return the files
-            return files;
+            return Directory.EnumerateFiles(dir, pattern, recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
         }
 
         public void ExpandPackagePaths(Vars.Vars vars)
         {
             List<string> packageFiles = new();
-            foreach (var path in Package)
+            foreach (var relativePath in Package)
             {
+                var path = "{tools.path}" + relativePath;
+
                 // Glob all files in 'path'
-                foreach (var filepath in Glob(vars.ResolvePath(path)))
+                foreach (var filepath in Glob(path))
                 {
                     packageFiles.Add(filepath);
                 }
@@ -130,25 +104,25 @@ namespace Config
         }
     }
 
-    public class Processes
+    public class ProcessesDescriptor
     {
         [JsonPropertyName("processes")]
-        public IReadOnlyList<Process> ProcessList { get; set; } = new List<Process>();
+        public IReadOnlyList<ProcessDescriptor> ProcessList { get; set; } = new List<ProcessDescriptor>();
 
         [JsonIgnore]
-        public Dictionary<string, Process> ProcessMap { get; private set; } = new();
+        public Dictionary<string, ProcessDescriptor> ProcessMap { get; private set; } = new();
 
-        bool GetProcessByName(string name, out Process process)
+        bool GetProcessByName(string name, out ProcessDescriptor processDescriptor)
         {
-            return ProcessMap.TryGetValue(name, out process);
+            return ProcessMap.TryGetValue(name, out processDescriptor);
         }
 
-        public static bool ReadJson(string path, Vars.Vars vars, out Processes processes)
+        public static bool ReadJson(string path, Vars.Vars vars, out ProcessesDescriptor processesDescriptor)
         {
             if (File.Exists(path) == false)
             {
                 Console.WriteLine($"ERROR: Processes file '{path}' does not exist");
-                processes = null;
+                processesDescriptor = null;
                 return false;
             }
             using var r = new StreamReader(path);
@@ -157,63 +131,90 @@ namespace Config
             {
                 PropertyNameCaseInsensitive = true
             };
-            var jsonModel = JsonSerializer.Deserialize<Processes>(jsonString, options);
+            var jsonModel = JsonSerializer.Deserialize<ProcessesDescriptor>(jsonString, options);
 
             // Build Process Map using Process.Name as the key
-            jsonModel.ProcessMap = new Dictionary<string, Process>();
+            jsonModel.ProcessMap = new Dictionary<string, ProcessDescriptor>();
             foreach (var process in jsonModel.ProcessList)
             {
                 // Each process contains a list of 'paths' that can contain glob patterns, we need to expand those
                 process.ExpandPackagePaths(vars);
                 jsonModel.ProcessMap.Add(process.Name, process);
             }
-            processes = jsonModel;
+            processesDescriptor = jsonModel;
             return true;
         }
 
+        public void ObtainHashes(string filepath, Vars.Vars vars)
+        {
+            // From 'cache.path' load 'processes.config.json.dep'
+            var tracker = new FileTracker.Tracker(vars);
+            tracker.Load(filepath);
+            // Collect the names of all processes, they are the node names in the tracker
+            var processNames = new HashSet<string>();
+            foreach (var process in ProcessList)
+            {
+                processNames.Add(process.Name);
+            }
+            tracker.SetNodes(processNames);
+            // Collect the files of each process and set them on the tracker as the node's dependencies
+            foreach (var process in ProcessList)
+            {
+                var files = new HashSet<string>();
+                foreach (var path in process.Package)
+                {
+                    files.Add(path);
+                }
+                tracker.SetFiles(process.Name, files);
+            }
+            // Now update the tracker, it will compute the hash of each node
+            Dictionary<string, string> nodeHashes = new();
+            tracker.Update(nodeHashes);
+            // Add these node hashes as vars
+            foreach (var item in nodeHashes)
+            {
+                vars.Add($"process.{item.Key}.hash", item.Value, true);
+            }
+        }
     }
 
-    public class TransformProcess
+    public class TransformationProcessDescriptor
     {
+        [JsonPropertyName("name")]
+        public string Name { get; set; } = string.Empty;
         [JsonPropertyName("thread")]
-        public string Thread { get; set; }
-
+        public string Thread { get; set; } = "main";
         [JsonPropertyName("vars")]
         public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
-
         [JsonPropertyName("process")]
-        public string Process { get; set; }
-
+        public string Process { get; set; } = string.Empty;
         [JsonPropertyName("cmdline")]
-        public string Cmdline { get; set; }
-
-        [JsonPropertyName("name")]
-        public string Name { get; set; }
+        public string Cmdline { get; set; } = string.Empty;
     }
 
-    public class Transforms
+    public class TransformationsDescriptor
     {
         [JsonPropertyName("transforms")]
-        public IReadOnlyList<Transform> TransformsList { get; set; } = new List<Transform>();
+        public IReadOnlyList<TransformationDescriptor> TransformsList { get; set; } = new List<TransformationDescriptor>();
 
-        public bool GetTransformByName(string name, out Transform transform)
+        public bool GetTransformByName(string name, out TransformationDescriptor transformationDescriptor)
         {
             foreach (var t in TransformsList)
             {
                 if (t.Name != name) continue;
-                transform = t;
+                transformationDescriptor = t;
                 return true;
             }
-            transform = null;
+            transformationDescriptor = null;
             return false;
         }
 
-        public static bool ReadJson(string path, out Transforms transforms)
+        public static bool ReadJson(string path, out TransformationsDescriptor transformationsDescriptor)
         {
             if (File.Exists(path) == false)
             {
                 Console.WriteLine($"ERROR: Transforms file '{path}' does not exist");
-                transforms = null;
+                transformationsDescriptor = null;
                 return false;
             }
             using var r = new StreamReader(path);
@@ -222,29 +223,28 @@ namespace Config
             {
                 PropertyNameCaseInsensitive = true
             };
-            var jsonModel = JsonSerializer.Deserialize<Transforms>(jsonString, options);
+            var jsonModel = JsonSerializer.Deserialize<TransformationsDescriptor>(jsonString, options);
 
-            transforms = jsonModel;
+            transformationsDescriptor = jsonModel;
             return true;
         }
-
     }
 
-    public class TransformStage
+    public class TransformationStageDescriptor
     {
         [JsonPropertyName("name")]
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
         [JsonPropertyName("processes")]
-        public IReadOnlyList<TransformProcess> Processes { get; set; } = new List<TransformProcess>();
+        public IReadOnlyList<TransformationProcessDescriptor> Processes { get; set; } = new List<TransformationProcessDescriptor>();
     }
 
-    public class Transform
+    public class TransformationDescriptor
     {
         [JsonPropertyName("name")]
-        public string Name { get; set; }
+        public string Name { get; set; } = string.Empty;
 
         [JsonPropertyName("stages")]
-        public IReadOnlyList<TransformStage> Stages { get; set; } = new List<TransformStage>();
+        public IReadOnlyList<TransformationStageDescriptor> Stages { get; set; } = new List<TransformationStageDescriptor>();
     }
 
 }

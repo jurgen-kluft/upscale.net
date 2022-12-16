@@ -9,7 +9,7 @@ internal class Node
 
 public class Tracker
 {
-    private Dictionary<string, string> _paths = new();
+    private Vars.Vars _vars;
     private Dictionary<string, Node> _nodes = new();
 
     private bool _hashContent = false;
@@ -17,20 +17,9 @@ public class Tracker
 
     public Tracker(Vars.Vars vars, bool hashContent = false)
     {
-        SetPaths(vars);
+        _vars = new Vars.Vars(vars);
         _hashContent = hashContent;
         _hashAlgorithm = SHA1.Create();
-    }
-
-    private void SetPaths(Vars.Vars vars)
-    {
-        _paths.Clear();
-        var pathVars = new [] { "input.path", "output.path", "tools.path", "cache.path" };
-        foreach (var pathVar in pathVars)
-        {
-            vars.Get(pathVar, out var path);
-            _paths.Add($"{pathVar}", path);
-        }
     }
 
     private static string IncreaseIndent(string indent)
@@ -166,39 +155,25 @@ public class Tracker
 
     private string ExpandVars(string filepath)
     {
-        foreach(var e in _paths)
-        {
-            if (filepath.StartsWith(e.Key))
-            {
-                return string.Concat(e.Value, filepath.AsSpan(e.Key.Length));
-            }
-        }
-        return filepath;
+        return _vars.ResolvePath(filepath);
     }
 
     public void SetFiles(string node, HashSet<string> files)
     {
-        HashSet<string> newFiles = new(files.Count);
-        foreach(var file in files)
-        {
-            string newFile = ExpandVars(file);
-            newFiles.Add(newFile);
-        }
-
         var n = GetOrCreateNode(node);
         var keys = new List<string>(n.Files.Keys);
         foreach (var key in keys)
         {
-            if (!newFiles.Contains(key))
+            if (!files.Contains(key))
             {
                 n.Files.Remove(key);
             }
         }
-        foreach (var key in newFiles)
+        foreach (var key in files)
         {
             if (!n.Files.ContainsKey(key))
             {
-                n.Files.Add(key, key);
+                n.Files.Add(key, "0000000000000000000000000000000000000000");
             }
         }
     }
@@ -237,13 +212,10 @@ public class Tracker
     }
 
     // Update; update all the nodes and its files and items and return the list of node (names) that have changed
-    public List<string> Update()
+    public void Update(Dictionary<string,string> nodeHashes)
     {
         // For each node compute a hash of the files and items
         // Then update the Items["hash"] with the hash value
-
-        List<string> changedNodes = new();
-
         foreach (var node in _nodes.Values)
         {
             var nodeHash = new StringBuilder();
@@ -299,9 +271,8 @@ public class Tracker
             if (newNodeHashStr != oldNodeHashStr)
             {
                 node.Items["node.hash"] = newNodeHashStr;
-                changedNodes.Add(node.Name);
             }
+            nodeHashes.Add(node.Name, newNodeHashStr);
         }
-        return changedNodes;
     }
 }

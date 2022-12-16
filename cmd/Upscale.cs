@@ -4,16 +4,16 @@ namespace Upscale;
 // - --dry-run: Dry run, don't actually run the process, only show in the console (and log what might be run)
 // - --transforms FILE - Path to the transform file (e.g. "{tools.path}/transforms.config.json")
 // - --processes FILE - Path to the processes file (e.g. "{tools.path}/processes.config.json")
-// - -f, --folders <folders> - List of folders to search for files separated by ;
+// - -a, --vars <key=value> - List of variables separated by ;
 // - -n, --nominator <nominator>: Work is split into N jobs, this is the nominator of the fraction of work to do
 // - -d, --denominator <denominator>: Work is split into N jobs, this is the denominator of the fraction of work to do
 
 class Program
 {
-    private static int Run(bool dryRun, string folders, string transformsFilepath, string processesFilepath, int job, int totalJobs)
+    private static int Run(bool dryRun, string variables, string transformsFilePath, string processesFilePath, int job, int totalJobs)
     {
         Vars.Vars vars = new();
-        foreach (var f in folders.Split(';'))
+        foreach (var f in variables.Split(';'))
         {
             var kv = f.Trim().Split('=');
             if (kv.Length == 2)
@@ -24,16 +24,20 @@ class Program
             }
         }
 
+        var processesDepFilePath = processesFilePath.Replace("{tools.path}", "{cache.path}");
+        processesDepFilePath = processesDepFilePath + ".dep";
+
         // Expand paths in the transforms and processes file paths
-        transformsFilepath = vars.ResolvePath(transformsFilepath);
-        processesFilepath = vars.ResolvePath(processesFilepath);
+        transformsFilePath = vars.ResolvePath(transformsFilePath);
+        processesFilePath = vars.ResolvePath(processesFilePath);
+        processesDepFilePath = vars.ResolvePath(processesDepFilePath);
 
         // Load JSON 'process.config.json' file
-        if (Config.Processes.ReadJson(processesFilepath, vars, out var processes) == false)
+        if (Config.ProcessesDescriptor.ReadJson(processesFilePath, vars, out var processes) == false)
         {
             return -1;
         }
-        if (Config.Transforms.ReadJson(transformsFilepath, out var transforms) == false)
+        if (Config.TransformationsDescriptor.ReadJson(transformsFilePath, out var transforms) == false)
         {
             return -1;
         }
@@ -45,6 +49,9 @@ class Program
         {
             return -1;
         }
+
+        // For the processes create a FileTracker and afterwards add 'process.{process name}.hash=hash' to vars
+        processes.ObtainHashes(processesDepFilePath, vars);
 
         // Glob all the 'png' files in the input path
         var inputPath = vars.ResolvePath("{input.path}");
@@ -60,12 +67,19 @@ class Program
             inputFilesEnd = inputFiles.Count;
         }
 
+        // for each input file, strip of the input path and add it to the 'input.files' variable
+        for (var i = inputFilesStart; i < inputFilesEnd; i++)
+        {
+            var inputFile = inputFiles[i];
+            inputFiles[i] = inputFile.Substring(inputPath.Length + 1);
+        }
+
         var inputFilesJob = inputFiles.Skip(inputFilesStart).Take(inputFilesEnd - inputFilesStart).ToList();
         foreach (var currentInputFilePath in inputFilesJob)
         {
             // Figure out if there is a 'currentInputFilePath'.json file next to the 'currentInputFilePath' file.
             // If so we need to load/parse that JSON file and use the data in it to override the default settings.
-            Config.TextureSettings.ReadJson(currentInputFilePath + ".json", out var currentTextureConfig);
+            Config.TextureSettings.ReadJson(Path.Join(inputPath, currentInputFilePath + ".json"), out var currentTextureConfig);
 
             Vars.Vars localVars = new(vars);
             globalTextureConfig.MergeIntoVars(localVars, false);
@@ -85,7 +99,7 @@ class Program
     public static int Main(string[] args)
     {
         var optionDryRun = new Option<bool>(new[] { "--dry-run" }, "Dry run, don't actually run the process, only show in the console (and log) what might be run)");
-        var optionFolders = new Option<string>(new[] { "-f", "--folders" }, "List of folders to search for files separated by ;");
+        var optionVars = new Option<string>(new[] { "-a", "--vars" }, "List of variables (key=value) separated by ';'");
         var optionTransforms = new Option<string>(new[] { "--transforms" }, getDefaultValue: () => "{tools.path}/transforms.config.json", "Path to the transform file (e.g. \"{tools.path}/transforms.config.json\")");
         var optionProcesses = new Option<string>(new[] { "--processes" }, getDefaultValue: () => "{tools.path}/processes.config.json", "Path to the processes file (e.g. \"{tools.path}/processes.config.json\")");
 
@@ -95,19 +109,19 @@ class Program
         var rootCommand = new RootCommand
             {
                 optionDryRun,
-                optionFolders,
+                optionVars,
                 optionTransforms,
                 optionProcesses,
                 optionDenominator,
                 optionNominator
             };
 
-        rootCommand.SetHandler((dryRun, folders, transforms, processes, denominator, nominator) =>
+        rootCommand.SetHandler((dryRun, vars, transforms, processes, denominator, nominator) =>
         {
-            var result = Run(dryRun, folders, transforms, processes, nominator, denominator);
+            var result = Run(dryRun, vars, transforms, processes, nominator, denominator);
             Environment.Exit(result);
         },
-        optionDryRun, optionFolders, optionTransforms, optionProcesses, optionDenominator, optionNominator);
+        optionDryRun, optionVars, optionTransforms, optionProcesses, optionDenominator, optionNominator);
 
         return rootCommand.InvokeAsync(args).Result;
     }

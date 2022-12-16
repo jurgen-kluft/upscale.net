@@ -14,6 +14,13 @@ public class Vars
             }
         }
     }
+    public Vars(IReadOnlyDictionary<string,string> vars)
+    {
+        foreach (var item in vars)
+        {
+            _vars.Add(item.Key, item.Value);
+        }
+    }
 
     public bool Exists(string name)
     {
@@ -41,6 +48,8 @@ public class Vars
 
     public bool Add(string name, string value, bool overwrite = false)
     {
+        value = Environment.ExpandEnvironmentVariables(value);
+
         var exists = _vars.ContainsKey(name);
         switch (overwrite)
         {
