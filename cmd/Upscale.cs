@@ -76,7 +76,7 @@ class Program
         for (var i = inputFilesStart; i < inputFilesEnd; i++)
         {
             var inputFile = inputFiles[i];
-            inputFiles[i] = inputFile.Substring(inputPath.Length + 1);
+            inputFiles[i] = inputFile[(inputPath.Length + 1)..];
         }
 
         var inputFilesJob = inputFiles.Skip(inputFilesStart).Take(inputFilesEnd - inputFilesStart).ToList();

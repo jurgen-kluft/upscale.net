@@ -1,3 +1,7 @@
+using System.IO;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace DependencyTracker;
 
 internal class Node
@@ -9,9 +13,12 @@ internal class Node
         Files = files;
     }
 
-    public string Name { get; init; }
-    public Dictionary<string, string> Items { get; init; }
-    public Dictionary<string, string> Files { get; init; }
+    [JsonPropertyName("name")]
+    public string Name { get; set; }
+    [JsonPropertyName("items")]
+    public Dictionary<string, string> Items { get; set; }
+    [JsonPropertyName("files")]
+    public Dictionary<string, string> Files { get; set; }
 }
 
 public class Tracker
@@ -28,15 +35,6 @@ public class Tracker
         HashContent = hashContent;
     }
 
-    private static string IncreaseIndent(string indent)
-    {
-        return string.Concat(indent, "    ");
-    }
-    private static string DecreaseIndent(string indent)
-    {
-        return indent.Substring(0, indent.Length - 4);
-    }
-
     public void Save(string filepath)
     {
         if (File.Exists(filepath))
@@ -44,49 +42,19 @@ public class Tracker
             File.Delete(filepath);
         }
 
-        using var w = new StreamWriter(filepath);
-        var indent = "    ";
-        w.WriteLine("{");
-        w.WriteLine($"{indent}\"nodes\": [");
-        indent = IncreaseIndent(indent);
-        foreach (var node in Nodes.Values)
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.General)
         {
-            w.WriteLine($"{indent}{{");
-            indent = IncreaseIndent(indent);
-            w.WriteLine($"{indent}\"name\": \"{node.Name}\",");
-            w.WriteLine($"{indent}\"items\": [");
-            indent = IncreaseIndent(indent);
-            foreach (var item in node.Items)
-            {
-                w.WriteLine($"{indent}{{");
-                indent = IncreaseIndent(indent);
-                w.WriteLine($"{indent}\"name\": \"{item.Key}\",");
-                w.WriteLine($"{indent}\"hash\": \"{item.Value}\"");
-                indent = DecreaseIndent(indent);
-                w.WriteLine($"{indent}}},");
-            }
-            indent = DecreaseIndent(indent);
-            w.WriteLine($"{indent}],");
-            w.WriteLine($"{indent}\"files\": [");
-            indent = IncreaseIndent(indent);
-            foreach (var file in node.Files)
-            {
-                w.WriteLine($"{indent}{{");
-                indent = IncreaseIndent(indent);
-                w.WriteLine($"{indent}\"name\": \"{file.Key}\",");
-                w.WriteLine($"{indent}\"hash\": \"{file.Value}\"");
-                indent = DecreaseIndent(indent);
-                w.WriteLine($"{indent}}},");
-            }
-            indent = DecreaseIndent(indent);
-            w.WriteLine($"{indent}]");
-            indent = DecreaseIndent(indent);
-            w.WriteLine($"{indent}}},");
-        }
-        indent = DecreaseIndent(indent);
-        w.WriteLine($"{indent}]");
-        w.WriteLine("}");
+            WriteIndented = true,
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
 
+        // Write JSON using System.Text.Json
+        List<Node> nodes = new (Nodes.Values);
+        var jsonText = System.Text.Json.JsonSerializer.Serialize<List<Node>>(nodes, options);
+
+        using var w = new StreamWriter(filepath);
+        w.Write(jsonText);
         w.Flush();
         w.Close();
     }
@@ -100,6 +68,13 @@ public class Tracker
         {
             return;
         }
+
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.General)
+        {
+            WriteIndented = true,
+            PropertyNameCaseInsensitive = true,
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
 
         // Load the array of nodes from a file using System.Text.Json
         using var r = new StreamReader(filepath);
