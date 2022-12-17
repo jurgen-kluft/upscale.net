@@ -4,6 +4,7 @@
 
 .idea/
 target/
+temp/
 tags
 
 #except the following files

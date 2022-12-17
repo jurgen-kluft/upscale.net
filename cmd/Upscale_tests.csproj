@@ -3,13 +3,12 @@
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
     <Compile Remove="*.cs" />
+    <Compile Remove="serilog/**/*.cs" />
     <Compile Include="Vars.cs" />
     <Compile Include="Vars_test.cs" />
   </ItemGroup>

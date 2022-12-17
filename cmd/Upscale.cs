@@ -1,3 +1,6 @@
+using Serilog.Sinks.SystemConsole;
+using Serilog.Sinks.File;
+
 namespace Upscale;
 
 // Parse command line arguments:
@@ -37,7 +40,7 @@ class Program
         {
             return -1;
         }
-        if (Config.TransformationsDescriptor.ReadJson(transformsFilePath, out var transforms) == false)
+        if (Config.TransformationsDescriptor.ReadJson(transformsFilePath, out var transforms) == false || transforms == null)
         {
             return -1;
         }
@@ -51,9 +54,11 @@ class Program
         }
 
         // For the processes create a FileTracker and afterwards add 'process.{process name}.hash=hash' to vars
-        processes.ObtainHashes(processesDepFilePath, vars);
+        processes.UpdateDependencyTracker(processesDepFilePath, vars);
 
-        // Glob all the 'png' files in the input path
+        // Glob all the 'png' files in the input path, we should make this configurable, so we know which folders and
+        // extensions to glob for images. We could put this information in '{input.path}/global.config.json'.
+
         var inputPath = vars.ResolvePath("{input.path}");
         var inputFiles = Directory.GetFiles(inputPath, "*.png", SearchOption.AllDirectories).ToList();
         inputFiles.Sort();
@@ -86,11 +91,12 @@ class Program
             currentTextureConfig.MergeIntoVars(localVars, true);
 
             var transform = localVars.ResolveString("{transform}");
-            transforms.GetTransformByName(transform, out var transformConfig);
-
-            // Run the pipeline
-            var pipeline = new Transform.Pipeline(processes, transformConfig, localVars);
-            pipeline.Execute(currentInputFilePath, dryRun);
+            if (transforms.GetTransformByName(transform, out var transformConfig))
+            {
+                // Run the pipeline
+                var pipeline = new Transform.Pipeline(processes, transformConfig, localVars);
+                pipeline.Execute(currentInputFilePath, dryRun);
+            }
         }
 
         return 0;
@@ -98,6 +104,11 @@ class Program
 
     public static int Main(string[] args)
     {
+        Log.Logger = new LoggerConfiguration()
+            .WriteTo.Console()
+            .WriteTo.File("upscale-.log", rollingInterval: RollingInterval.Day)
+            .CreateLogger();
+
         var optionDryRun = new Option<bool>(new[] { "--dry-run" }, "Dry run, don't actually run the process, only show in the console (and log) what might be run)");
         var optionVars = new Option<string>(new[] { "-a", "--vars" }, "List of variables (key=value) separated by ';'");
         var optionTransforms = new Option<string>(new[] { "--transforms" }, getDefaultValue: () => "{tools.path}/transforms.config.json", "Path to the transform file (e.g. \"{tools.path}/transforms.config.json\")");

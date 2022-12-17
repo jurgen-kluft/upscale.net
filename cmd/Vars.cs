@@ -1,17 +1,20 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Vars;
 
 public class Vars
 {
     private readonly Dictionary<string, string> _vars = new();
 
-    public Vars(Vars vars = null)
+    public Vars()
     {
-        if (vars != null)
+    }
+
+    public Vars(Vars vars)
+    {
+        foreach (var item in vars._vars)
         {
-            foreach (var item in vars._vars)
-            {
-                _vars.Add(item.Key, item.Value);
-            }
+            _vars.Add(item.Key, item.Value);
         }
     }
     public Vars(IReadOnlyDictionary<string,string> vars)
@@ -39,10 +42,31 @@ public class Vars
         return false;
     }
 
-    public bool Find(string name, out string value)
+    public void GetInputs(HashSet<string> items)
+    {
+        foreach (var item in _vars)
+        {
+            if (item.Key.EndsWith(".input"))
+            {
+                items.Add(item.Value);
+            }
+        }
+    }
+    public void GetOutputs(HashSet<string> items)
+    {
+        foreach (var item in _vars)
+        {
+            if (item.Key.EndsWith(".output"))
+            {
+                items.Add(item.Value);
+            }
+        }
+    }
+
+    public bool Find(string name, [MaybeNullWhen(false)] out string value)
     {
         if (_vars.TryGetValue(name, out value)) return true;
-        value = string.Empty;
+        value = null;
         return false;
     }
 
@@ -101,8 +125,7 @@ public class Vars
                 }
             }
         }
-
-        return text;
+        return  Environment.ExpandEnvironmentVariables(text);
     }
 
     public string ResolvePath(string path)

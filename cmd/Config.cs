@@ -20,7 +20,7 @@ namespace Config
                 try
                 {
                     var jsonString = File.ReadAllText(path);
-                    settings = JsonSerializer.Deserialize<TextureSettings>(jsonString);
+                    settings = JsonSerializer.Deserialize<TextureSettings>(jsonString)??_default;
                     return true;
                 }
                 catch (Exception)
@@ -46,8 +46,8 @@ namespace Config
         public string Name { get; set; } = string.Empty;
         [JsonPropertyName("description")]
         public string Description { get; set; } = string.Empty;
-        [JsonPropertyName("path")]
-        public string ExecutablePath { get; set; } = string.Empty;
+        [JsonPropertyName("executable")]
+        public string Executable { get; set; } = string.Empty;
         [JsonPropertyName("package")]
         public IReadOnlyList<string> Package { get; set; } = new List<string>();
         [JsonPropertyName("vars")]
@@ -65,8 +65,8 @@ namespace Config
             }
 
             // If the path contains a glob pattern, then expand it
-            var dir = Path.GetDirectoryName(path);
-            var pattern = Path.GetFileName(path);
+            var dir = Path.GetDirectoryName(path)??"";
+            var pattern = Path.GetFileName(path)??"";
 
             // Deal with '**' in 'dir'
             var recursive = false;
@@ -116,12 +116,12 @@ namespace Config
         [JsonIgnore]
         public Dictionary<string, ProcessDescriptor> ProcessMap { get; private set; } = new();
 
-        bool GetProcessByName(string name, out ProcessDescriptor processDescriptor)
+        private bool GetProcessByName(string name, [MaybeNullWhen(false)] out ProcessDescriptor processDescriptor)
         {
             return ProcessMap.TryGetValue(name, out processDescriptor);
         }
 
-        public static bool ReadJson(string path, Vars.Vars vars, out ProcessesDescriptor processesDescriptor)
+        public static bool ReadJson(string path, Vars.Vars vars, [MaybeNullWhen(false)] out ProcessesDescriptor processesDescriptor)
         {
             if (File.Exists(path) == false)
             {
@@ -136,6 +136,11 @@ namespace Config
                 PropertyNameCaseInsensitive = true
             };
             var jsonModel = JsonSerializer.Deserialize<ProcessesDescriptor>(jsonString, options);
+            if (jsonModel == null)
+            {
+                processesDescriptor = null;
+                return false;
+            }
 
             // Build Process Map using Process.Name as the key
             jsonModel.ProcessMap = new Dictionary<string, ProcessDescriptor>();
@@ -149,10 +154,10 @@ namespace Config
             return true;
         }
 
-        public void ObtainHashes(string filepath, Vars.Vars vars)
+        public void UpdateDependencyTracker(string filepath, Vars.Vars vars)
         {
             // From 'cache.path' load 'processes.config.json.dep'
-            var tracker = new FileTracker.Tracker(vars);
+            var tracker = new DependencyTracker.Tracker(vars);
             tracker.Load(filepath);
             // Collect the names of all processes, they are the node names in the tracker
             var processNames = new HashSet<string>();
@@ -171,6 +176,7 @@ namespace Config
                 }
                 tracker.SetFiles(process.Name, files);
             }
+
             // Now update the tracker, it will compute the hash of each node
             Dictionary<string, string> nodeHashes = new();
             tracker.Update(nodeHashes);
@@ -179,6 +185,8 @@ namespace Config
             {
                 vars.Add($"process.{item.Key}.hash", item.Value, true);
             }
+            // Save the updated dependency tracker information
+            tracker.Save(filepath);
         }
     }
 
@@ -201,7 +209,7 @@ namespace Config
         [JsonPropertyName("transforms")]
         public IReadOnlyList<TransformationDescriptor> TransformsList { get; set; } = new List<TransformationDescriptor>();
 
-        public bool GetTransformByName(string name, out TransformationDescriptor transformationDescriptor)
+        public bool GetTransformByName(string name, [MaybeNullWhen(false)] out TransformationDescriptor transformationDescriptor)
         {
             foreach (var t in TransformsList)
             {
@@ -213,7 +221,7 @@ namespace Config
             return false;
         }
 
-        public static bool ReadJson(string path, out TransformationsDescriptor transformationsDescriptor)
+        public static bool ReadJson(string path, out TransformationsDescriptor? transformationsDescriptor)
         {
             if (File.Exists(path) == false)
             {

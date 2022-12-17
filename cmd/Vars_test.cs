@@ -40,7 +40,7 @@ public class VarsTests
         Assert.True(vars.Find("a", out var value));
         Assert.Equal("1", value);
         Assert.False(vars.Find("b", out value));
-        Assert.Equal(string.Empty, value);
+        Assert.Null(value);
     }
 
     [Fact]

@@ -3,7 +3,7 @@
   <!-- Common properties -->
   <PropertyGroup>
     <TargetFramework>net6.0</TargetFramework>
-    <PackAsTool>true</PackAsTool>
+    <PackAsTool>false</PackAsTool>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>    
     <!-- SolutionDir is not defined when building projects explicitly -->
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -15,5 +15,6 @@
     <OutputPath>$(SolutionDir)target\out\$(MSBuildProjectName)\$(Configuration)\</OutputPath>
     <OutDir>$(OutputPath)</OutDir>
     <!-- DocumentationFile>$(SolutionDir)target\doc\$(Configuration)\$(MSBuildProjectName).xml</DocumentationFile-->
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 </Project>
