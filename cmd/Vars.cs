@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text;
 
 namespace Vars;
 
@@ -25,10 +26,25 @@ public class Vars
         }
     }
 
-    public bool Exists(string name)
+    public Vars(string delimitedKeyValues)
     {
-        return _vars.ContainsKey(name);
+        foreach (var kv in delimitedKeyValues.Split(';', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = kv.Split('=');
+            if (parts.Length != 2) continue;
+            var key = parts[0].Trim();
+            var value = parts[1].Trim();
+            _vars[key] = value;
+        }
     }
+
+    public string this[string key]
+    {
+        get => _vars[key];
+        set => _vars[key] = value;
+    }
+
+    public bool ContainsKey(string key) => _vars.ContainsKey(key);
 
     public bool Get(string name, out string value)
     {
@@ -179,26 +195,20 @@ public class Vars
 
         public Slice Search()
         {
-            // a key is delimited by '{' and '}' and can be nested
-            // e.g. "uprez.esr.model={esrgan.model.{input.filename}}"
-
-            var keyBegin = -1;
-            var keyEnd = -1;
-
             while (_cursor < _text.Length)
             {
                 switch (_text[_cursor])
                 {
                     case '}':
                         {
-                            keyEnd = _cursor;
+                            var keyEnd = _cursor;
                             _cursor++;
                             switch (_stackTop)
                             {
                                 case 0: // this situation is not possible (we have a '}' without a '{')
                                     return new Slice { Start = -1, End = -1 };
                                 case > 0:
-                                    keyBegin = _stack[--_stackTop];
+                                    var keyBegin = _stack[--_stackTop];
                                     return new Slice { Start = keyBegin + 1, End = keyEnd };
                             }
 
@@ -215,4 +225,16 @@ public class Vars
             return new Slice { Start = -1, End = -1 };
         }
     }
+
+    public override string ToString()
+    {
+        var sb = new StringBuilder();
+        foreach (var kv in _vars)
+        {
+            sb.Append(kv.Key).Append('=').Append(kv.Value).Append(';');
+        }
+
+        return sb.ToString();
+    }
+
 }

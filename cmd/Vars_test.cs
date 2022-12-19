@@ -5,6 +5,19 @@ namespace Vars;
 public class VarsTests
 {
     [Fact]
+    public void TestStringConstructor()
+    {
+        var vars = new Vars("a=1;b=2;c=3");
+
+        Assert.True(vars.Get("a", out var value));
+        Assert.Equal("1", value);
+        Assert.True(vars.Get("b", out value));
+        Assert.Equal("2", value);
+        Assert.True(vars.Get("c", out value));
+        Assert.Equal("3", value);
+    }
+
+    [Fact]
     public void TestContainsVars()
     {
         Assert.True(Vars.ContainsVars("{a}"));
@@ -17,8 +30,8 @@ public class VarsTests
     {
         var vars = new Vars();
         vars.Add("a", "1");
-        Assert.True(vars.Exists("a"));
-        Assert.False(vars.Exists("b"));
+        Assert.True(vars.ContainsKey("a"));
+        Assert.False(vars.ContainsKey("b"));
     }
 
     [Fact]
@@ -59,8 +72,8 @@ public class VarsTests
         var vars2 = new Vars();
         vars2.Add("b", "2");
         vars.Merge(vars2);
-        Assert.True(vars.Exists("a"));
-        Assert.True(vars.Exists("b"));
+        Assert.True(vars.ContainsKey("a"));
+        Assert.True(vars.ContainsKey("b"));
     }
 
     [Fact]
@@ -71,8 +84,8 @@ public class VarsTests
         var vars2 = new Dictionary<string, string>();
         vars2.Add("b", "2");
         vars.Merge(vars2);
-        Assert.True(vars.Exists("a"));
-        Assert.True(vars.Exists("b"));
+        Assert.True(vars.ContainsKey("a"));
+        Assert.True(vars.ContainsKey("b"));
     }
 
     [Fact]

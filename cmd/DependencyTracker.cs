@@ -26,7 +26,7 @@ public class Tracker
     private Vars.Vars Vars { get; init; }
     private Dictionary<string, Node> Nodes { get; init; }
 
-    private bool HashContent { get; init; } = false;
+    private bool HashContent { get; init; }
 
     public Tracker(Vars.Vars vars, bool hashContent = false)
     {
@@ -51,7 +51,7 @@ public class Tracker
 
         // Write JSON using System.Text.Json
         List<Node> nodes = new (Nodes.Values);
-        var jsonText = System.Text.Json.JsonSerializer.Serialize<List<Node>>(nodes, options);
+        var jsonText = JsonSerializer.Serialize<List<Node>>(nodes, options);
 
         using var w = new StreamWriter(filepath);
         w.Write(jsonText);
@@ -59,17 +59,17 @@ public class Tracker
         w.Close();
     }
 
-    public void Load(string filepath)
+    public bool Load(string filepath)
     {
         Nodes.Clear();
 
         // Check if the file exists before trying to load and parse it
         if (!File.Exists(filepath))
         {
-            return;
+            return false;
         }
 
-        var options = new JsonSerializerOptions(JsonSerializerDefaults.General)
+        var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.General)
         {
             WriteIndented = true,
             PropertyNameCaseInsensitive = true,
@@ -79,15 +79,18 @@ public class Tracker
         // Load the array of nodes from a file using System.Text.Json
         using var r = new StreamReader(filepath);
         var json = r.ReadToEnd();
-        var nodes = JsonSerializer.Deserialize<List<Node>>(json);
+        r.Close();
+
+        var nodes = JsonSerializer.Deserialize<List<Node>>(json, jsonOptions);
         if (nodes != null)
         {
             foreach (var node in nodes)
             {
                 Nodes.Add(node.Name, node);
             }
+            return true;
         }
-        r.Close();
+        return false;
     }
 
     private bool FindNode(string name, out Node? node)
@@ -317,10 +320,10 @@ public class Tracker
             using var sha1 = SHA1.Create();
             var hashBytes = sha1.ComputeHash(Encoding.UTF8.GetBytes(nodeHash.ToString()));
 
-            if (!node.Items.TryGetValue("node.hash", out var oldNodeHashStr))
-            {
-                oldNodeHashStr = "0000000000000000000000000000000000000000";
-            }
+            //if (!node.Items.TryGetValue("node.hash", out var oldNodeHashStr))
+            //{
+            //    oldNodeHashStr = "0000000000000000000000000000000000000000";
+            //}
             var newNodeHashStr = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
             node.Items["node.hash"] = newNodeHashStr;
             nodeHashes.Add(node.Name, newNodeHashStr);

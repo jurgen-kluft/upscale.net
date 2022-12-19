@@ -1,4 +1,3 @@
-
 using Config;
 
 namespace Transform;
@@ -31,100 +30,117 @@ internal class Stage
 internal class Process
 {
     public Vars.Vars Vars { get; private set; } // The variables for this node/process (accumulation)
-    public Config.TransformationProcessDescriptor ProcessDescriptorConfig { get; private set; } // The process configuration
+    private TransformationProcessDescriptor TransformationProcessDescriptorConfig { get; set; } // The process configuration
+    private ProcessDescriptor ProcessDescriptor { get; set; } // The process descriptor
 
-    public string Name => ProcessDescriptorConfig.Name;
+    public string Name => TransformationProcessDescriptorConfig.Name;
 
-    public Process(Config.TransformationProcessDescriptor processDescriptorConfig)
+    public Process(TransformationProcessDescriptor processDescriptorConfig, ProcessesDescriptor processes)
     {
         Vars = new Vars.Vars(processDescriptorConfig.Vars);
-        ProcessDescriptorConfig = processDescriptorConfig;
+        TransformationProcessDescriptorConfig = processDescriptorConfig;
+        ProcessDescriptor = processes.GetProcessByName(Name);
     }
 
     public int Execute(DependencyTracker.Tracker tracker, string nodeName, bool dryRun)
     {
-        bool changed = tracker.UpdateItem(nodeName, "cmdline", ProcessDescriptorConfig.Cmdline);
+        var changed = tracker.UpdateItem(nodeName, "cmdline", TransformationProcessDescriptorConfig.Cmdline);
         changed = tracker.UpdateNode(nodeName) || changed;
 
-        int exitCode = 0;
+        var exitCode = 0;
         if (changed)
         {
             // execute the command line
-            var cmdline = Vars.ResolveString(ProcessDescriptorConfig.Cmdline);
+            var cmdline = Vars.ResolveString(TransformationProcessDescriptorConfig.Cmdline);
             if (!dryRun)
             {
                 var process = new System.Diagnostics.Process();
-                process.StartInfo.FileName = Vars.ResolvePath(ProcessDescriptorConfig.Process);
+                process.StartInfo.FileName = Vars.ResolvePath(ProcessDescriptor.Executable);
                 process.StartInfo.Arguments = $"{cmdline}";
                 process.StartInfo.UseShellExecute = false;
                 process.StartInfo.RedirectStandardOutput = true;
                 process.StartInfo.RedirectStandardError = true;
                 process.Start();
                 process.WaitForExit();
-                exitCode = process.ExitCode;
+                if (process.ExitCode != 0)
+                {
+                    Log.Error("Running process '{process}' of \"{node}\" failed with exit code {exitCode}", Name, nodeName, process.ExitCode);
+                    exitCode = process.ExitCode;
+                }
+                else
+                {
+                   Log.Information("Running process '{process}' of \"{node}\" completed", Name, nodeName);
+                }
             }
+            else
+            {
+                Log.Information("Running process '{process}' of \"{node}\" completed (dry-run)", Name, nodeName);
+            }
+        }
+        else
+        {
+            Log.Information("Skipping process '{process}' of \"{node}\" since no changes were detected", Name, nodeName);
         }
         return exitCode;
     }
-
 }
 
 internal class Pipeline
 {
-    private Config.ProcessesDescriptor _processesDescriptor; // All the processes that are available
-    private readonly Config.TransformationDescriptor _transformationDescriptor; // The transform of this pipeline
-    private readonly Vars.Vars _vars; // The variables for this pipeline
-    private readonly List<Stage> _stages; // The stages of the pipeline
+    private ProcessesDescriptor ProcessesDescriptor { get; init; } // All the processes that are available
+    private TransformationDescriptor TransformationDescriptor { get; init; } // The transform of this pipeline
+    private Vars.Vars Vars { get; init; } // The variables for this pipeline
+    private List<Stage> Stages { get; set; } // The stages of the pipeline
 
-    public Pipeline(Config.ProcessesDescriptor processesDescriptor, Config.TransformationDescriptor transformationDescriptor, Vars.Vars vars)
+    public Pipeline(ProcessesDescriptor processesDescriptor, TransformationDescriptor transformationDescriptor, Vars.Vars vars)
     {
-        _processesDescriptor = processesDescriptor;
-        _transformationDescriptor = transformationDescriptor;
-        _vars = vars;
-        _stages = new List<Stage>();
+        ProcessesDescriptor = processesDescriptor;
+        TransformationDescriptor = transformationDescriptor;
+        Vars = vars;
+        Stages = new List<Stage>();
     }
 
-    private Stage NewStage(Config.TransformationStageDescriptor stageDescriptorConfig)
+    private Stage NewStage(TransformationStageDescriptor stageDescriptorConfig)
     {
         var stage = new Stage(config: stageDescriptorConfig, inputVars: new Vars.Vars(), processes: new List<Process>(), outputVars: new Vars.Vars());
-
-        // Add the stage to the pipeline
-        _stages.Add(stage);
-
+        Stages.Add(stage);
         return stage;
     }
 
-    public void Execute(string filePath, bool dryRun)
+    public int Execute(string filePath, bool dryRun)
     {
         // Prepare the variables for the pipeline
-        _vars.Add("transform.input", filePath);
+        Vars.Add("transform.input", filePath);
 
         // Load the dependency file belonging to the incoming file
-        var tracker = new DependencyTracker.Tracker(_vars);
-        tracker.Load(filePath + ".dep");
+        var tracker = new DependencyTracker.Tracker(Vars);
+        if (tracker.Load(filePath + ".dep") == false)
+        {
+            Log.Information("No dependency file found for '{filePath}'", filePath);
+        }
 
         // Construct the pipeline stages
-        for (var i = 0; i < _transformationDescriptor.Stages.Count; i++)
+        for (var i = 0; i < TransformationDescriptor.Stages.Count; i++)
         {
-            var stageConfig = _transformationDescriptor.Stages[i];
+            var stageConfig = TransformationDescriptor.Stages[i];
             var pipelineStage = NewStage(stageConfig);
 
             if (i == 0)
             {
                 // For the first stage start by merging in the pipeline variables
-                pipelineStage.InputVars.Merge(_vars);
+                pipelineStage.InputVars.Merge(Vars);
             }
             else
             {
                 // For all other stages start by merging in the output variables of the previous stage
-                var previousStage = _stages[i - 1];
+                var previousStage = Stages[i - 1];
                 pipelineStage.InputVars.Merge(previousStage.OutputVars);
             }
 
             // Create the processes for this stage
             foreach (var transformProcess in pipelineStage.Config.Processes)
             {
-                var process = new Process(transformProcess);
+                var process = new Process(transformProcess, ProcessesDescriptor);
                 process.Vars.Merge(pipelineStage.InputVars);
                 pipelineStage.Processes.Add(process);
             }
@@ -139,7 +155,7 @@ internal class Pipeline
         // For each node of the dependency tracker (process), collect all the input and output files
         var nodeNames = new HashSet<string>();
         Dictionary<string, HashSet<string>> nodeFiles = new();
-        foreach (var stage in _stages)
+        foreach (var stage in Stages)
         {
             foreach (var process in stage.Processes)
             {
@@ -163,17 +179,30 @@ internal class Pipeline
 
         // Execute each stage in the pipeline and its processes
         // TODO: parallelize this using process.ProcessDescriptorConfig.Thread to separate the process into 'threads'
-        foreach (var stage in _stages)
+        var exitCode = 0;
+        foreach (var stage in Stages)
         {
             foreach (var process in stage.Processes)
             {
                 var nodeName = $"stage.{stage.Name}.process.{process.Name}";
-                var exitCode = process.Execute(tracker, nodeName, dryRun);
-
-                // do something with the exit code
+                var result = process.Execute(tracker, nodeName, dryRun);
+                if (result != 0)
+                {
+                    Log.Error("Error executing process '{process}' of stage '{stage}' for '{filePath}'", process.Name, stage.Name, filePath);
+                    exitCode = result;
+                    break;
+                }
+            }
+            if (exitCode != 0)
+            {
+                // Since there was an error, stop executing any further stages
+                break;
             }
         }
 
+        Log.Information("Saving dependency file for '{filePath}'", filePath);
         tracker.Save(filePath + ".dep");
+
+        return exitCode;
     }
 }

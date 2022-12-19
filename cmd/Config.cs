@@ -117,9 +117,11 @@ namespace Config
         [JsonIgnore]
         public Dictionary<string, ProcessDescriptor> ProcessMap { get; private set; } = new();
 
-        private bool GetProcessByName(string name, [MaybeNullWhen(false)] out ProcessDescriptor processDescriptor)
+        internal ProcessDescriptor GetProcessByName(string name)
         {
-            return ProcessMap.TryGetValue(name, out processDescriptor);
+            if (ProcessMap.TryGetValue(name, out ProcessDescriptor processDescriptor))
+                return processDescriptor;
+            return null;
         }
 
         public static bool ReadJson(string path, Vars.Vars vars, [MaybeNullWhen(false)] out ProcessesDescriptor processesDescriptor)
@@ -222,7 +224,7 @@ namespace Config
             return false;
         }
 
-        public static bool ReadJson(string path, out TransformationsDescriptor? transformationsDescriptor)
+        public static bool ReadJson(string path, [MaybeNullWhen(false)] out TransformationsDescriptor transformationsDescriptor)
         {
             if (File.Exists(path) == false)
             {

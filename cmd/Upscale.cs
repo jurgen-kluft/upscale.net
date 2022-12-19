@@ -1,6 +1,3 @@
-using Serilog.Sinks.SystemConsole;
-using Serilog.Sinks.File;
-
 namespace Upscale;
 
 // Parse command line arguments:
@@ -11,56 +8,50 @@ namespace Upscale;
 // - -n, --nominator <nominator>: Work is split into N jobs, this is the nominator of the fraction of work to do
 // - -d, --denominator <denominator>: Work is split into N jobs, this is the denominator of the fraction of work to do
 
-class Program
+internal static class Program
 {
     private static int Run(bool dryRun, string variables, string transformsFilePath, string processesFilePath, int job, int totalJobs)
     {
-        Vars.Vars vars = new();
-        foreach (var f in variables.Split(';'))
-        {
-            var kv = f.Trim().Split('=');
-            if (kv.Length == 2)
-            {
-                var key = kv[0].Trim();
-                var value = kv[1].Trim();
-                vars.Add(key, value);
-            }
-        }
+        Vars.Vars vars = new(variables);
 
-        var processesDepFilePath = processesFilePath.Replace("{tools.path}", "{cache.path}");
-        processesDepFilePath = processesDepFilePath + ".dep";
+        var processesDepFilePath = processesFilePath.Replace("{tools.path}", "{cache.path}") + ".dep";
 
         // Expand paths in the transforms and processes file paths
         transformsFilePath = vars.ResolvePath(transformsFilePath);
         processesFilePath = vars.ResolvePath(processesFilePath);
         processesDepFilePath = vars.ResolvePath(processesDepFilePath);
 
-        // Load JSON 'process.config.json' file
+        // Load and parse JSON 'process.config.json' file
         if (Config.ProcessesDescriptor.ReadJson(processesFilePath, vars, out var processes) == false)
         {
+            Log.Error("Failed to read processes file '{processesFilePath}'", processesFilePath);
             return -1;
         }
-        if (Config.TransformationsDescriptor.ReadJson(transformsFilePath, out var transforms) == false || transforms == null)
+        // Load and parse JSON 'transforms.config.json' file
+        if (Config.TransformationsDescriptor.ReadJson(transformsFilePath, out var transforms) == false)
         {
+            Log.Error("Failed to read transforms file '{transformsFilePath}'", transformsFilePath);
             return -1;
         }
 
-        // In the folder 'input.path' there is a 'global.config.json' file that contains the default 'settings' for each input file
+        // In the 'input.path' there is a 'global.config.json' file that contains the default 'settings' for each input file
         // This file is not optional, it must exist
+        // TODO: Add the image scanning patterns (e.g. *.jpg, *.png, /sub/**/*.jpg, etc.) to the global.config.json file
+        // TODO: We could tag transform pipelines with the image extension (default.png, default.jpg) to deal with different
+        //       image types.
         var globalTextureConfigFilepath = vars.ResolvePath("{input.path}/global.config.json");
         if (Config.TextureSettings.ReadJson(globalTextureConfigFilepath, out var globalTextureConfig) == false)
         {
+            Log.Error("Failed to read global texture config file '{globalTextureConfigFilepath}'", globalTextureConfigFilepath);
             return -1;
         }
 
         // For the processes create a FileTracker and afterwards add 'process.{process name}.hash=hash' to vars
         processes.UpdateDependencyTracker(processesDepFilePath, vars);
 
-        // Glob all the 'png' files in the input path, we should make this configurable, so we know which folders and
-        // extensions to glob for images. We could put this information in '{input.path}/global.config.json'.
-
+        // Glob all the image files in the input path.
         var inputPath = vars.ResolvePath("{input.path}");
-        var inputFiles = Directory.GetFiles(inputPath, "*.png", SearchOption.AllDirectories).ToList();
+        var inputFiles = GlobFiles(inputPath, "*.png");
         inputFiles.Sort();
 
         // Divide the work (inputFiles) into N jobs
@@ -72,13 +63,10 @@ class Program
             inputFilesEnd = inputFiles.Count;
         }
 
-        // for each input file, strip of the input path and add it to the 'input.files' variable
-        for (var i = inputFilesStart; i < inputFilesEnd; i++)
-        {
-            var inputFile = inputFiles[i];
-            inputFiles[i] = inputFile[(inputPath.Length + 1)..];
-        }
-
+        // Iterate over all input files (images)
+        // - prepare the variables (main variables merged with global and per texture settings)
+        // - get the transform descriptor and construct a pipeline
+        // - execute the pipeline
         var inputFilesJob = inputFiles.Skip(inputFilesStart).Take(inputFilesEnd - inputFilesStart).ToList();
         foreach (var currentInputFilePath in inputFilesJob)
         {
@@ -86,6 +74,7 @@ class Program
             // If so we need to load/parse that JSON file and use the data in it to override the default settings.
             Config.TextureSettings.ReadJson(Path.Join(inputPath, currentInputFilePath + ".json"), out var currentTextureConfig);
 
+            // Combine the main, global texture settings and per texture settings variables
             Vars.Vars localVars = new(vars);
             globalTextureConfig.MergeIntoVars(localVars, false);
             currentTextureConfig.MergeIntoVars(localVars, true);
@@ -94,8 +83,14 @@ class Program
             if (transforms.GetTransformByName(transform, out var transformConfig))
             {
                 // Run the pipeline
+                Log.Information("Running pipeline '{transform}' on \"{input}\"", transform, currentInputFilePath);
                 var pipeline = new Transform.Pipeline(processes, transformConfig, localVars);
                 pipeline.Execute(currentInputFilePath, dryRun);
+            }
+            else
+            {
+                // log: warning (use serilog)
+                Log.Warning("Transform '{transform}' not found, skipping file \"{file}\"", transform, currentInputFilePath);
             }
         }
 
@@ -130,10 +125,31 @@ class Program
         rootCommand.SetHandler((dryRun, vars, transforms, processes, denominator, nominator) =>
         {
             var result = Run(dryRun, vars, transforms, processes, nominator, denominator);
-            Environment.Exit(result);
+            if (result == 0) return;
+            Log.Error("An error occurred, exiting with code {result}", result);
+            Environment.ExitCode = result;
         },
         optionDryRun, optionVars, optionTransforms, optionProcesses, optionDenominator, optionNominator);
 
-        return rootCommand.InvokeAsync(args).Result;
+        var exitCode = rootCommand.InvokeAsync(args).Result;
+
+        Log.CloseAndFlush();
+        return exitCode;
+    }
+
+
+    private static List<string> GlobFiles(string rootPath, string searchPattern)
+    {
+        List<string> filePaths = new();
+
+        // Get all matching files in the root directory and its subdirectories
+        foreach (var file in Directory.EnumerateFiles(rootPath, searchPattern, SearchOption.AllDirectories))
+        {
+            // Get the relative path of the file to the root path
+            var relativePath = file.Replace(rootPath, "").TrimStart(Path.DirectorySeparatorChar);
+            filePaths.Add(relativePath);
+        }
+
+        return filePaths;
     }
 }
