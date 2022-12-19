@@ -50,7 +50,7 @@ public class Tracker
         };
 
         // Write JSON using System.Text.Json
-        List<Node> nodes = new (Nodes.Values);
+        List<Node> nodes = new(Nodes.Values);
         var jsonText = JsonSerializer.Serialize<List<Node>>(nodes, options);
 
         using var w = new StreamWriter(filepath);
@@ -59,45 +59,61 @@ public class Tracker
         w.Close();
     }
 
-    public bool Load(string filepath)
+    public int Load(string filepath)
     {
         Nodes.Clear();
 
         // Check if the file exists before trying to load and parse it
         if (!File.Exists(filepath))
         {
-            return false;
+            return 0;
         }
 
         var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.General)
         {
-            WriteIndented = true,
             PropertyNameCaseInsensitive = true,
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase
         };
 
-        // Load the array of nodes from a file using System.Text.Json
-        using var r = new StreamReader(filepath);
-        var json = r.ReadToEnd();
-        r.Close();
-
-        var nodes = JsonSerializer.Deserialize<List<Node>>(json, jsonOptions);
-        if (nodes != null)
+        string json = string.Empty;
+        try
         {
-            foreach (var node in nodes)
-            {
-                Nodes.Add(node.Name, node);
-            }
-            return true;
+            // Load the array of nodes from a file using System.Text.Json
+            using var r = new StreamReader(filepath);
+            json = r.ReadToEnd();
+            r.Close();
         }
-        return false;
+        catch (Exception e)
+        {
+            Log.Error("Error reading from file '{filepath}': {msg}", filepath, e.Message);
+            return -1;
+        }
+
+        try
+        {
+            var nodes = JsonSerializer.Deserialize<List<Node>>(json, jsonOptions);
+            if (nodes != null)
+            {
+                foreach (var node in nodes)
+                {
+                    Nodes.Add(node.Name, node);
+                }
+                return nodes.Count;
+            }
+        }
+        catch (Exception e)
+        {
+            Log.Error("Error parsing JSON from file '{filepath}': {msg}", filepath, e.Message);
+            return -2;
+        }
+        return -3;
     }
 
     private bool FindNode(string name, out Node? node)
     {
         if (Nodes.ContainsKey(name))
         {
-            node =  Nodes[name];
+            node = Nodes[name];
             return true;
         }
 
@@ -303,7 +319,7 @@ public class Tracker
             }
 
             // Note: We do not include the item "node.hash" here since we are recomputing it.
-            List<string> sortedItems = new(node.Items.Keys);
+            List<string> sortedItems = new();
             foreach (var item in node.Items)
             {
                 if (item.Key == "node.hash") continue;

@@ -114,10 +114,7 @@ internal class Pipeline
 
         // Load the dependency file belonging to the incoming file
         var tracker = new DependencyTracker.Tracker(Vars);
-        if (tracker.Load(filePath + ".dep") == false)
-        {
-            Log.Information("No dependency file found for '{filePath}'", filePath);
-        }
+        tracker.Load(filePath + ".dep");
 
         // Construct the pipeline stages
         for (var i = 0; i < TransformationDescriptor.Stages.Count; i++)
