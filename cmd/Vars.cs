@@ -58,23 +58,23 @@ public class Vars
         return false;
     }
 
-    public void GetInputs(HashSet<string> items)
+    public void GetInputs(List<string> items)
     {
-        foreach (var item in _vars)
+        foreach (var (key,value) in _vars)
         {
-            if (item.Key.EndsWith(".input"))
+            if (key.EndsWith(".input"))
             {
-                items.Add(item.Value);
+                items.Add(value);
             }
         }
     }
-    public void GetOutputs(HashSet<string> items)
+    public void GetOutputs(List<string> items)
     {
-        foreach (var item in _vars)
+        foreach (var (key,value) in _vars)
         {
-            if (item.Key.EndsWith(".output"))
+            if (key.EndsWith(".output"))
             {
-                items.Add(item.Value);
+                items.Add(value);
             }
         }
     }
@@ -84,6 +84,14 @@ public class Vars
         if (_vars.TryGetValue(name, out value)) return true;
         value = null;
         return false;
+    }
+
+    public void Add(Vars vars)
+    {
+        foreach (var item in vars._vars)
+        {
+            Add(item.Key, item.Value);
+        }
     }
 
     public bool Add(string name, string value, bool overwrite = false)
@@ -126,7 +134,7 @@ public class Vars
         return key.Valid;
     }
 
-    public string ResolveString(string text)
+    public bool TryResolveString(string text, out string result)
     {
         while (true)
         {
@@ -139,16 +147,35 @@ public class Vars
                 {
                     text = text.Replace($"{{{varName}}}", varValue);
                 }
+                else
+                {
+                    result = Environment.ExpandEnvironmentVariables(text);
+                    return false;
+                }
             }
         }
-        return  Environment.ExpandEnvironmentVariables(text);
+        result = Environment.ExpandEnvironmentVariables(text);
+        return true;
+    }
+
+    public string ResolveString(string text)
+    {
+        var ok = TryResolveString(text, out var result);
+        return result;
+    }
+
+    public bool TryResolvePath(string path, out string result)
+    {
+        var ok = TryResolveString(path, out var p);
+        result = Environment.ExpandEnvironmentVariables(p);
+        return ok;
     }
 
     public string ResolvePath(string path)
     {
-        var p = ResolveString(path);
-        p = Environment.ExpandEnvironmentVariables(p);
-        return p;
+        var ok = TryResolveString(path, out var p);
+        var result = Environment.ExpandEnvironmentVariables(p);
+        return result;
     }
 
     public static List<string> ExtractAllVars(string text)

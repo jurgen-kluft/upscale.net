@@ -1,3 +1,5 @@
+using FileTracker;
+
 namespace Upscale;
 
 // Parse command line arguments:
@@ -8,9 +10,13 @@ namespace Upscale;
 // - -n, --nominator <nominator>: Work is split into N jobs, this is the nominator of the fraction of work to do
 // - -d, --denominator <denominator>: Work is split into N jobs, this is the denominator of the fraction of work to do
 
+// Notes:
+// If multiple upscale processes are running on the same machine they individually point to a different '{cache.path}'.
+// A '{cache.path}' should never be shared.
+
 internal static class Program
 {
-    private static int Run(bool dryRun, string variables, string transformsFilePath, string processesFilePath, int job, int totalJobs)
+    private static int Run(bool dryRun, bool validate, string variables, string transformsFilePath, string processesFilePath, int job, int totalJobs)
     {
         Vars.Vars vars = new(variables);
 
@@ -19,7 +25,6 @@ internal static class Program
         // Expand paths in the transforms and processes file paths
         transformsFilePath = vars.ResolvePath(transformsFilePath);
         processesFilePath = vars.ResolvePath(processesFilePath);
-        processesDepFilePath = vars.ResolvePath(processesDepFilePath);
 
         // Load and parse JSON 'process.config.json' file
         if (Config.ProcessesDescriptor.ReadJson(processesFilePath, vars, out var processes) == false)
@@ -27,30 +32,50 @@ internal static class Program
             Log.Error("Failed to read processes file '{processesFilePath}'", processesFilePath);
             return -1;
         }
+
+        var fileTrackerCache = new FileTrackerCache();
+
         // Load and parse JSON 'transforms.config.json' file
-        if (Config.TransformationsDescriptor.ReadJson(transformsFilePath, out var transforms) == false)
+        var transforms = new Config.TransformationsDescriptor();
+        if (transforms.ReadJson(transformsFilePath, processes, vars, fileTrackerCache) == false)
         {
             Log.Error("Failed to read transforms file '{transformsFilePath}'", transformsFilePath);
             return -1;
         }
 
+        if (validate)
+        {
+            // Validate the processes and transforms
+            if (processes.Validate(vars) < 0)
+            {
+                Log.Error("Failed to validate processes file '{processesFilePath}'", processesFilePath);
+                return -1;
+            }
+            if (transforms.Validate(vars, processes) < 0)
+            {
+                Log.Error("Failed to validate transforms file '{transformsFilePath}'", transformsFilePath);
+                return -1;
+            }
+
+            return 0;
+        }
+
         // In the 'input.path' there is a 'global.config.json' file that contains the default 'settings' for each input file
         // This file is not optional, it must exist
         // TODO: Add the image scanning patterns (e.g. *.jpg, *.png, /sub/**/*.jpg, etc.) to the global.config.json file
-        // TODO: We could tag transform pipelines with the image extension (default.png, default.jpg) to deal with different
-        //       image types.
-        var globalTextureConfigFilepath = vars.ResolvePath("{input.path}/global.config.json");
+        // TODO: We could tag transform pipelines with the image extension (default.png, default.jpg) to deal with different image types.
+        vars.TryResolvePath("{input.path}/global.config.json", out var globalTextureConfigFilepath);
         if (Config.TextureSettings.ReadJson(globalTextureConfigFilepath, out var globalTextureConfig) == false)
         {
             Log.Error("Failed to read global texture config file '{globalTextureConfigFilepath}'", globalTextureConfigFilepath);
             return -1;
         }
 
-        // For the processes create a FileTracker and afterwards add 'process.{process name}.hash=hash' to vars
-        processes.UpdateDependencyTracker(processesDepFilePath, vars);
+        // For each process descriptor write 'process.{process.Name}.dep.json' in the cache folder
+        processes.PrepareProcessDepFiles(vars, fileTrackerCache);
 
         // Glob all the image files in the input path.
-        var inputPath = vars.ResolvePath("{input.path}");
+        vars.TryResolvePath("{input.path}", out var inputPath);
         var inputFiles = GlobFiles(inputPath, "*.png");
         inputFiles.Sort();
 
@@ -79,18 +104,18 @@ internal static class Program
             globalTextureConfig.MergeIntoVars(localVars, false);
             currentTextureConfig.MergeIntoVars(localVars, true);
 
-            var transform = localVars.ResolveString("{transform}");
-            if (transforms.GetTransformByName(transform, out var transformConfig))
+            var resolved = localVars.TryResolveString("{transform}", out var transform);
+            if (resolved && transforms.GetTransformByName(transform, out var transformConfig))
             {
                 // Run the pipeline
-                Log.Information("Running pipeline '{transform}' on \"{input}\"", transform, currentInputFilePath);
+                Log.Information("Running pipeline '{transform}' on \"{currentInputFilePath}\"", transform, currentInputFilePath);
                 var pipeline = new Transform.Pipeline(processes, transformConfig, localVars);
-                pipeline.Execute(currentInputFilePath, dryRun);
+                pipeline.Execute(currentInputFilePath, dryRun, fileTrackerCache);
             }
             else
             {
                 // log: warning (use serilog)
-                Log.Warning("Transform '{transform}' not found, skipping file \"{file}\"", transform, currentInputFilePath);
+                Log.Warning("Transform '{transform}' not found, skipping file \"{currentInputFilePath}\"", transform, currentInputFilePath);
             }
         }
 
@@ -105,6 +130,7 @@ internal static class Program
             .CreateLogger();
 
         var optionDryRun = new Option<bool>(new[] { "--dry-run" }, "Dry run, don't actually run the process, only show in the console (and log) what might be run)");
+        var optionValidate = new Option<bool>(new[] { "--validate" }, "Validate some of the settings (e.g. check if paths exist and variables can be resolved)");
         var optionVars = new Option<string>(new[] { "-a", "--vars" }, "List of variables (key=value) separated by ';'");
         var optionTransforms = new Option<string>(new[] { "--transforms" }, getDefaultValue: () => "{tools.path}/transforms.config.json", "Path to the transform file (e.g. \"{tools.path}/transforms.config.json\")");
         var optionProcesses = new Option<string>(new[] { "--processes" }, getDefaultValue: () => "{tools.path}/processes.config.json", "Path to the processes file (e.g. \"{tools.path}/processes.config.json\")");
@@ -115,6 +141,7 @@ internal static class Program
         var rootCommand = new RootCommand
             {
                 optionDryRun,
+                optionValidate,
                 optionVars,
                 optionTransforms,
                 optionProcesses,
@@ -122,14 +149,14 @@ internal static class Program
                 optionNominator
             };
 
-        rootCommand.SetHandler((dryRun, vars, transforms, processes, denominator, nominator) =>
+        rootCommand.SetHandler((dryRun, validate, vars, transforms, processes, denominator, nominator) =>
         {
-            var result = Run(dryRun, vars, transforms, processes, nominator, denominator);
+            var result = Run(dryRun, validate, vars, transforms, processes, nominator, denominator);
             if (result == 0) return;
             Log.Error("An error occurred, exiting with code {result}", result);
             Environment.ExitCode = result;
         },
-        optionDryRun, optionVars, optionTransforms, optionProcesses, optionDenominator, optionNominator);
+        optionDryRun, optionValidate, optionVars, optionTransforms, optionProcesses, optionDenominator, optionNominator);
 
         var exitCode = rootCommand.InvokeAsync(args).Result;
 

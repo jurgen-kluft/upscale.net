@@ -1,6 +1,8 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Vars;
+using Vars = Vars.Vars;
 
 namespace Config
 {
@@ -21,7 +23,7 @@ namespace Config
                 try
                 {
                     var jsonString = File.ReadAllText(path);
-                    settings = JsonSerializer.Deserialize<TextureSettings>(jsonString)??_default;
+                    settings = JsonSerializer.Deserialize<TextureSettings>(jsonString) ?? _default;
                     return true;
                 }
                 catch (Exception)
@@ -32,7 +34,7 @@ namespace Config
             return false;
         }
 
-        public void MergeIntoVars(Vars.Vars vars, bool overwrite)
+        public void MergeIntoVars(global::Vars.Vars vars, bool overwrite)
         {
             foreach (var item in Vars)
             {
@@ -54,7 +56,10 @@ namespace Config
         [JsonPropertyName("vars")]
         public IReadOnlyDictionary<string, string> Vars { get; set; } = new Dictionary<string, string>();
 
-        private static IEnumerable<string> Glob( string path)
+        public string ProcessDepFilePath => "{cache.path}/process." + Name + ".dep.json";
+        public string ProcessNodeFilePath => "{cache.path}/process." + Name + ".node.json";
+
+        private static IEnumerable<string> Glob(string path)
         {
             // 'path' may contain a glob pattern, so we need to expand it
             // For example: 'path/to/**/*.png' will expand to all the png files in the 'path/to' folder and all subfolders
@@ -66,8 +71,8 @@ namespace Config
             }
 
             // If the path contains a glob pattern, then expand it
-            var dir = Path.GetDirectoryName(path)??"";
-            var pattern = Path.GetFileName(path)??"";
+            var dir = Path.GetDirectoryName(path) ?? "";
+            var pattern = Path.GetFileName(path) ?? "";
 
             // Deal with '**' in 'dir'
             var recursive = false;
@@ -87,18 +92,18 @@ namespace Config
             return Directory.EnumerateFiles(dir, pattern, recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly);
         }
 
-        public void ExpandPackagePaths(Vars.Vars vars)
+        public void ExpandPackagePaths(global::Vars.Vars vars)
         {
-            var toolsPath = vars.ResolvePath("{tools.path}");
+            var resolved = vars.TryResolvePath("{tools.path}", out var toolsPath);
 
             List<string> packageFiles = new();
             foreach (var relativePath in Package)
             {
                 var fullPath = Path.Join(toolsPath, relativePath);
-                fullPath = vars.ResolvePath(fullPath);
+                vars.TryResolvePath(fullPath, out var resolvedFullPath);
 
                 // Glob all files in 'fullPath'
-                foreach (var filepath in Glob(fullPath))
+                foreach (var filepath in Glob(resolvedFullPath))
                 {
                     var relativeFilepath = filepath[(toolsPath.Length + 1)..];
                     relativeFilepath = "{tools.path}/" + relativeFilepath;
@@ -117,14 +122,12 @@ namespace Config
         [JsonIgnore]
         public Dictionary<string, ProcessDescriptor> ProcessMap { get; private set; } = new();
 
-        internal ProcessDescriptor GetProcessByName(string name)
+        internal bool GetProcessByName(string name, [MaybeNullWhen(false)] out ProcessDescriptor process)
         {
-            if (ProcessMap.TryGetValue(name, out ProcessDescriptor processDescriptor))
-                return processDescriptor;
-            return null;
+            return ProcessMap.TryGetValue(name, out process);
         }
 
-        public static bool ReadJson(string path, Vars.Vars vars, [MaybeNullWhen(false)] out ProcessesDescriptor processesDescriptor)
+        public static bool ReadJson(string path, global::Vars.Vars vars, [MaybeNullWhen(false)] out ProcessesDescriptor processesDescriptor)
         {
             if (File.Exists(path) == false)
             {
@@ -151,45 +154,118 @@ namespace Config
             {
                 // Each process contains a list of 'paths' that can contain glob patterns, we need to expand those
                 process.ExpandPackagePaths(vars);
-                jsonModel.ProcessMap.Add(process.Name, process);
+                jsonModel.ProcessMap[process.Name] = process;
             }
             processesDescriptor = jsonModel;
             return true;
         }
 
-        public void UpdateDependencyTracker(string filepath, Vars.Vars vars)
+        public int Validate(global::Vars.Vars vars)
         {
-            // From 'cache.path' load 'processes.config.json.dep'
-            var tracker = new DependencyTracker.Tracker(vars);
-            tracker.Load(filepath);
-            // Collect the names of all processes, they are the node names in the tracker
-            var processNames = new HashSet<string>();
-            foreach (var process in ProcessList)
+            // we can validate a couple of points:
+            // - does the executable path point to a file
+            // - does each process have an list of package files that exist?
+
+            // for each process, add their variables to 'vars' since these
+            // are variables that can be overriden and should be used in the
+            // validation of 'TransformationsDescriptor'
+            var result = 0;
+
+            if (!vars.Get("tools.path", out var toolsPath))
             {
-                processNames.Add(process.Name);
+                Log.Error("{tools.path} is not defined as a variable on the command-line");
+                result = -1;
             }
-            tracker.SetNodes(processNames);
-            // Collect the files of each process and set them on the tracker as the node's dependencies
+
+            if (!Directory.Exists(toolsPath))
+            {
+                Log.Error($"{{tools.path}} '{toolsPath}' does not exist");
+                result = -1;
+            }
+
             foreach (var process in ProcessList)
             {
-                var files = new HashSet<string>();
+                {
+                    var resolved = vars.TryResolvePath("{tools.path}/" + process.Executable, out var executablePath);
+                    // any issues are reported to Log and validation will continue
+                    if (!resolved || File.Exists(executablePath) == false)
+                    {
+                        Log.Error("Process '{process.Name}' has a non-existing or invalid executable '{executablePath}'", process.Name, executablePath);
+                        result = -1;
+                    }
+                }
+
+                // check the package files
+                foreach (var packageFile in process.Package)
+                {
+                    var resolved = vars.TryResolvePath(packageFile, out var packageFilePath);
+                    if (!resolved || File.Exists(packageFilePath) == false)
+                    {
+                        Log.Error("Process '{process.Name}' has an non-existing or invalid package file '{packageFile}'", process.Name, packageFile);
+                        result = -1;
+                    }
+                }
+
+                // add the process variables to 'vars'
+                foreach (var item in process.Vars)
+                {
+                    vars.Add(item.Key, item.Value, true);
+                }
+            }
+            return result;
+        }
+
+        public void PrepareProcessDepFiles(global::Vars.Vars vars, FileTracker.FileTrackerCache fileTrackerCache)
+        {
+            // For each process write a 'process.{process.Name}.dep.json' in the cache directory containing content
+            // that has an impact on change detection (e.g. the cmdline)
+            foreach (var process in ProcessList)
+            {
+                // From 'cache.path' load 'processes.config.json.dep'
+                var depFilename = process.ProcessDepFilePath;
+                var oldTracker = FileTracker.FileTracker.FromFile(depFilename, vars);
+
+                // Collect the names of all processes, they are the node names in the tracker
+                var files = new List<string>();
                 foreach (var path in process.Package)
                 {
                     files.Add(path);
                 }
-                tracker.SetFiles(process.Name, files);
-            }
+                files.Sort();
+                var newTracker = new FileTracker.FileTrackerBuilder(vars, fileTrackerCache);
+                var processNodeHash = newTracker.Add(vars, process.Name, files);
 
-            // Now update the tracker, it will compute the hash of each node
-            Dictionary<string, string> nodeHashes = new();
-            tracker.Update(nodeHashes);
-            // Add these node hashes as vars
-            foreach (var item in nodeHashes)
-            {
-                vars.Add($"process.{item.Key}.hash", item.Value, true);
+                // if the trackers are not identical then we need to update the cache
+                var identical = oldTracker.IsIdentical(newTracker);
+                if (identical == false)
+                {
+                    newTracker.Save(depFilename);
+                }
+
+                var processNodeFilename = process.ProcessNodeFilePath;
+                var resolvedProcessNodeFilename = vars.ResolvePath(processNodeFilename);
+                if (!identical || (File.Exists(resolvedProcessNodeFilename) == false))
+                {
+                    var pathToMakeSureIsCreated = Path.GetDirectoryName(resolvedProcessNodeFilename);
+                    if (!string.IsNullOrEmpty(pathToMakeSureIsCreated))
+                    {
+                        Directory.CreateDirectory(pathToMakeSureIsCreated);
+                    }
+
+                    // also save a file that can be used by this upscale execution to determine if a process has changed
+                    // this file ('{cache.path}/process." + process.Name + ".node.json"') should simply contain
+                    // the hash of the node.
+                    using var w = new StreamWriter(resolvedProcessNodeFilename);
+                    // write in JSON format
+                    w.WriteLine("{");
+                    w.WriteLine("    \"hash\": \"" + processNodeHash + "\",");
+                    w.WriteLine("    \"exec\": \"" + process.Executable + "\"");
+                    w.WriteLine("}");
+                    w.Close();
+
+                }
+                fileTrackerCache.AddFile(vars, processNodeFilename, true);
             }
-            // Save the updated dependency tracker information
-            tracker.Save(filepath);
         }
     }
 
@@ -205,44 +281,6 @@ namespace Config
         public string Process { get; set; } = string.Empty;
         [JsonPropertyName("cmdline")]
         public string Cmdline { get; set; } = string.Empty;
-    }
-
-    public class TransformationsDescriptor
-    {
-        [JsonPropertyName("transforms")]
-        public IReadOnlyList<TransformationDescriptor> TransformsList { get; set; } = new List<TransformationDescriptor>();
-
-        public bool GetTransformByName(string name, [MaybeNullWhen(false)] out TransformationDescriptor transformationDescriptor)
-        {
-            foreach (var t in TransformsList)
-            {
-                if (t.Name != name) continue;
-                transformationDescriptor = t;
-                return true;
-            }
-            transformationDescriptor = null;
-            return false;
-        }
-
-        public static bool ReadJson(string path, [MaybeNullWhen(false)] out TransformationsDescriptor transformationsDescriptor)
-        {
-            if (File.Exists(path) == false)
-            {
-                Console.WriteLine($"ERROR: Transforms file '{path}' does not exist");
-                transformationsDescriptor = null;
-                return false;
-            }
-            using var r = new StreamReader(path);
-            var jsonString = r.ReadToEnd();
-            var options = new JsonSerializerOptions(JsonSerializerDefaults.General)
-            {
-                PropertyNameCaseInsensitive = true
-            };
-            var jsonModel = JsonSerializer.Deserialize<TransformationsDescriptor>(jsonString, options);
-
-            transformationsDescriptor = jsonModel;
-            return true;
-        }
     }
 
     public class TransformationStageDescriptor
@@ -262,4 +300,124 @@ namespace Config
         public IReadOnlyList<TransformationStageDescriptor> Stages { get; set; } = new List<TransformationStageDescriptor>();
     }
 
+    public class TransformationsDescriptor
+    {
+        [JsonPropertyName("transforms")]
+        public IReadOnlyList<TransformationDescriptor> TransformsList { get; set; } = new List<TransformationDescriptor>();
+
+        public bool GetTransformByName(string name, [MaybeNullWhen(false)] out TransformationDescriptor transformationDescriptor)
+        {
+            foreach (var t in TransformsList)
+            {
+                if (t.Name != name) continue;
+                transformationDescriptor = t;
+                return true;
+            }
+            transformationDescriptor = null;
+            return false;
+        }
+
+        public bool ReadJson(string filepath, Config.ProcessesDescriptor processes, global::Vars.Vars vars, FileTracker.FileTrackerCache fileTrackerCache)
+        {
+            if (File.Exists(filepath) == false)
+            {
+                Console.WriteLine($"ERROR: Transforms file '{filepath}' does not exist");
+                return false;
+            }
+            using var r = new StreamReader(filepath);
+            var jsonString = r.ReadToEnd();
+            var options = new JsonSerializerOptions(JsonSerializerDefaults.General)
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            var jsonModel = JsonSerializer.Deserialize<TransformationsDescriptor>(jsonString, options);
+            if (jsonModel == null)
+            {
+                Log.Error("Failed to parse JSON file '{path}'", filepath);
+                return false;
+            }
+            TransformsList = jsonModel.TransformsList;
+
+            // for each transformation process generate a 'file' that can be used to detect changes
+            // this will be file that should be used as a 'content hashing' file.
+
+            foreach (var transform in TransformsList)
+            {
+                foreach (var stage in transform.Stages)
+                {
+                    foreach (var process in stage.Processes)
+                    {
+                        var filename = "{cache.path}/" + transform.Name + "." + stage.Name + "." + process.Name + ".dep";
+                        var resolvedFilename = vars.ResolvePath(filename);
+
+                        // write anything that has an impact on the process execution
+                        using var w = new StreamWriter(resolvedFilename);
+                        w.WriteLine(process.Process);
+                        w.WriteLine(process.Cmdline);
+                        foreach (var (key, value) in process.Vars)
+                        {
+                            w.WriteLine(key + "=" + value);
+                        }
+                        w.Close();
+
+                        fileTrackerCache.AddFile(vars, filename, true);
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        public int Validate(global::Vars.Vars globalVars, ProcessesDescriptor processes)
+        {
+            // Make sure that each process has a cmdline that can be resolved
+            global::Vars.Vars vars = new(globalVars);
+            vars.Add("transform", "default");
+            vars.Add("transform.source", "texture.png");
+
+            // See if each var in the process of a pipeline stage can be resolved without leaving any variables in the result
+            // Same for the command-line
+            var result = 0;
+            foreach (var transform in TransformsList)
+            {
+                global::Vars.Vars pipelineVars = new global::Vars.Vars(vars);
+                foreach (var stage in transform.Stages)
+                {
+                    global::Vars.Vars stageVars = new global::Vars.Vars(pipelineVars);
+                    foreach (var process in stage.Processes)
+                    {
+                        // Does the process descriptor exist?
+                        if (processes.GetProcessByName(process.Process, out var processDescriptor) == false)
+                        {
+                            Log.Error("Transform '{transform.Name}' stage '{stage.Name}' process '{process.Name}' references unknown process '{process.Process}'", transform.Name, stage.Name, process.Name, process.Process);
+                            result = 1;
+                        }
+
+                        foreach (var item in process.Vars)
+                        {
+                            var resolved = stageVars.TryResolveString(item.Value, out var value);
+                            if (!resolved || global::Vars.Vars.ContainsVars(value))
+                            {
+                                Log.Error("Transform '{transform.Name}' stage '{stage.Name}' process '{process.Name}' has a var '{item.Key}' that cannot fully be resolved '{value}'", transform.Name, stage.Name, process.Name, item.Key, value);
+                                result = -1;
+                            }
+                            stageVars.Add(item.Key, value);
+                        }
+
+                        {
+                            var resolved = stageVars.TryResolveString(process.Cmdline, out var cmdline);
+                            if (!resolved || global::Vars.Vars.ContainsVars(cmdline))
+                            {
+                                Log.Error("Transform '{transform.Name}' stage '{stage.Name}' process '{process.Name}' has a command-line that cannot fully be resolved '{cmdline}'", transform.Name, stage.Name, process.Name, cmdline);
+                                result = -1;
+                            }
+                        }
+                    }
+
+                    pipelineVars.Add(stageVars);
+                }
+            }
+            return result;
+        }
+    }
 }
