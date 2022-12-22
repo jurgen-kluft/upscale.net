@@ -14,23 +14,24 @@ internal class FileGroup
     }
 
     [JsonPropertyName("name")]
-    public string Name { get; set; }
+    public string Name { get; }
     [JsonPropertyName("hash")]
     public string Hash { get; set; }
     [JsonPropertyName("files")]
-    public Dictionary<string, string> Files { get; set; }
+    public Dictionary<string, string> Files { get; }
 }
 
 // FileTrackerCache
 // This class is responsible for caching the computed hash of a file
 public class FileTrackerCache
 {
-    private Dictionary<string, string> FileHashes { get; init; }
-    private SHA1 HashAlgorithm { get; init; }
+    private Dictionary<string, string> FileHashes { get; } = new();
+    private SHA1 HashAlgorithm { get; }
+
+    private static string NullHashStr => "0000000000000000000000000000000000000000";
 
     public FileTrackerCache()
     {
-        FileHashes = new();
         HashAlgorithm = SHA1.Create();
     }
 
@@ -42,18 +43,9 @@ public class FileTrackerCache
             return FileHashes[resolvedFilePath];
         }
 
-        if (hashContent)
-        {
-            var hashStr = ComputeHashOfFileContent(resolvedFilePath);
-            FileHashes.Add(resolvedFilePath, hashStr);
-            return hashStr;
-        }
-        else
-        {
-            var hashStr = ComputeHashOfFile(resolvedFilePath);
-            FileHashes.Add(resolvedFilePath, hashStr);
-            return hashStr;
-        }
+        var hashStr = hashContent ? ComputeHashOfFileContent(resolvedFilePath) : ComputeHashOfFile(resolvedFilePath);
+        FileHashes.Add(resolvedFilePath, hashStr);
+        return hashStr;
     }
 
     private string ComputeHashOfFile(string filepath)
@@ -61,7 +53,7 @@ public class FileTrackerCache
         FileInfo fi = new(filepath);
         if (!fi.Exists)
         {
-            return "0000000000000000000000000000000000000000";
+            return NullHashStr;
         }
 
         // Compute a SHA1 hash of some of the file properties:
@@ -79,7 +71,7 @@ public class FileTrackerCache
         FileInfo fi = new(filepath);
         if (!fi.Exists)
         {
-            return "0000000000000000000000000000000000000000";
+            return NullHashStr;
         }
 
         // Compute a SHA1 hash of the file content
@@ -92,16 +84,14 @@ public class FileTrackerCache
 
 public class FileTrackerBuilder
 {
-    private Vars.Vars Vars { get; init; }
     internal Dictionary<string, FileGroup> FileGroups { get; init; }
     private FileTrackerCache FileTrackerCache { get; init; }
 
     private bool HashContent { get; init; }
     private SHA1 HashAlgorithm { get; init; }
 
-    public FileTrackerBuilder(Vars.Vars vars, FileTrackerCache fileTrackerCache, bool hashContent = false)
+    public FileTrackerBuilder(FileTrackerCache fileTrackerCache, bool hashContent = false)
     {
-        Vars = vars;
         FileGroups = new Dictionary<string, FileGroup>();
         FileTrackerCache = fileTrackerCache;
         HashContent = hashContent;
@@ -137,9 +127,9 @@ public class FileTrackerBuilder
         }
     }
 
-    public void Save(string filepath)
+    public void Save(Vars.Vars vars, string filepath)
     {
-        filepath = Vars.ResolvePath(filepath);
+        filepath = vars.ResolvePath(filepath);
         if (File.Exists(filepath))
         {
             File.Delete(filepath);
@@ -180,39 +170,25 @@ public class FileTracker
     public bool IsIdentical(FileTrackerBuilder builder)
     {
         if (FileGroups.Count != builder.FileGroups.Count)
-        {
             return false;
-        }
 
         foreach (var (fileGroupName, fileGroup) in FileGroups)
         {
             if (!builder.FileGroups.TryGetValue(fileGroupName, out var builderFileGroup))
-            {
                 return false;
-            }
-
             if (fileGroup.Hash != builderFileGroup.Hash)
-            {
                 return false;
-            }
         }
-
         return true;
     }
 
+    // For a specific node check if they are identical
     public bool IsIdentical(string nodeName, FileTrackerBuilder builder)
     {
-        // For a specific node check if they are identical
         if (!FileGroups.TryGetValue(nodeName, out var fileGroup))
-        {
             return false;
-        }
-
         if (!builder.FileGroups.TryGetValue(nodeName, out var builderFileGroup))
-        {
             return false;
-        }
-
         return fileGroup.Hash == builderFileGroup.Hash;
     }
 
@@ -221,8 +197,8 @@ public class FileTracker
         var ft = new FileTracker();
 
         // Check if the file exists before trying to load and parse it
-        filepath = vars.ResolvePath(filepath);
-        if (!File.Exists(filepath))
+        var filepathResolved = vars.ResolvePath(filepath);
+        if (!File.Exists(filepathResolved))
         {
             return ft;
         }
@@ -235,13 +211,13 @@ public class FileTracker
         var json = string.Empty;
         try
         {
-            using var r = new StreamReader(filepath);
+            using var r = new StreamReader(filepathResolved);
             json = r.ReadToEnd();
             r.Close();
         }
         catch (Exception e)
         {
-            Log.Error("Error reading from file '{filepath}': {msg}", filepath, e.Message);
+            Log.Error("Error reading from file '{filepathResolved}': {msg}", filepathResolved, e.Message);
             return ft;
         }
 
@@ -258,10 +234,9 @@ public class FileTracker
         }
         catch (Exception e)
         {
-            Log.Error("Error parsing JSON from file '{filepath}': {msg}", filepath, e.Message);
+            Log.Error("Error parsing JSON from file '{filepathResolved}': {msg}", filepathResolved, e.Message);
         }
 
         return ft;
     }
-
 }

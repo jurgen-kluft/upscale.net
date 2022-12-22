@@ -8,12 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Compile Include="Upscale.cs" />
-    <Compile Include="Transform.cs" />
-    <Compile Include="DependencyTracker.cs" />
-    <Compile Include="Vars.cs" />
     <Compile Include="Config.cs" />
+    <Compile Include="FileTracker.cs" />
+    <Compile Include="Transform.cs" />
+    <Compile Include="Upscale.cs" />
     <Compile Include="Usings.cs" />
+    <Compile Include="Vars.cs" />
     <Compile Include="serilog/**/*.cs" />
   </ItemGroup>
 

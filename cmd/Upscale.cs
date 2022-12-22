@@ -104,6 +104,8 @@ internal static class Program
             globalTextureConfig.MergeIntoVars(localVars, false);
             currentTextureConfig.MergeIntoVars(localVars, true);
 
+            // TODO: For this pipeline we should create a new file tracker cache
+
             var resolved = localVars.TryResolveString("{transform}", out var transform);
             if (resolved && transforms.GetTransformByName(transform, out var transformConfig))
             {

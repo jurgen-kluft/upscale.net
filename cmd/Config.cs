@@ -218,7 +218,7 @@ namespace Config
         public void PrepareProcessDepFiles(global::Vars.Vars vars, FileTracker.FileTrackerCache fileTrackerCache)
         {
             // For each process write a 'process.{process.Name}.dep.json' in the cache directory containing content
-            // that has an impact on change detection (e.g. the cmdline)
+            // that has an impact on change detection (e.g. the hash, executable path)
             foreach (var process in ProcessList)
             {
                 // From 'cache.path' load 'processes.config.json.dep'
@@ -232,14 +232,14 @@ namespace Config
                     files.Add(path);
                 }
                 files.Sort();
-                var newTracker = new FileTracker.FileTrackerBuilder(vars, fileTrackerCache);
+                var newTracker = new FileTracker.FileTrackerBuilder(fileTrackerCache);
                 var processNodeHash = newTracker.Add(vars, process.Name, files);
 
                 // if the trackers are not identical then we need to update the cache
                 var identical = oldTracker.IsIdentical(newTracker);
                 if (identical == false)
                 {
-                    newTracker.Save(depFilename);
+                    newTracker.Save(vars, depFilename);
                 }
 
                 var processNodeFilename = process.ProcessNodeFilePath;
@@ -253,7 +253,7 @@ namespace Config
                     }
 
                     // also save a file that can be used by this upscale execution to determine if a process has changed
-                    // this file ('{cache.path}/process." + process.Name + ".node.json"') should simply contain
+                    // this file ('{cache.path}/process." + process.Name + ".node.json"') should be default contain
                     // the hash of the node.
                     using var w = new StreamWriter(resolvedProcessNodeFilename);
                     // write in JSON format

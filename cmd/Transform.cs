@@ -167,7 +167,7 @@ internal class Pipeline
         // Collect all the 'stage.processName' strings, they serve as node names in the dependency tracker
         // For each node of the dependency tracker (process), collect all the input and output files
         // Build a new tracker
-        var newTracker = new FileTracker.FileTrackerBuilder(Vars, fileTrackerCache);
+        var newTracker = new FileTracker.FileTrackerBuilder(fileTrackerCache);
         foreach (var stage in Stages)
         {
             foreach (var process in stage.Processes)
@@ -181,6 +181,7 @@ internal class Pipeline
                 var unique = new HashSet<string>();
                 var files = new List<string>() { processNodeFilename };
 
+                // Each process has defined its input and output files in 'vars', all of them should end in '.input' or '.output'
                 foreach (var (key, value) in process.TransformProcessDescriptorConfig.Vars)
                 {
                     if (key.EndsWith(".input") || key.EndsWith(".output"))
@@ -223,7 +224,7 @@ internal class Pipeline
         }
 
         Log.Information("Saving dependency file for '{filePath}'", filePath);
-        newTracker.Save("{cache.path}/" + filePath + ".dep.json");
+        newTracker.Save(Vars, "{cache.path}/" + filePath + ".dep.json");
 
         return exitCode;
     }
