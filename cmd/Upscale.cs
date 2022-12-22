@@ -104,15 +104,16 @@ internal static class Program
             globalTextureConfig.MergeIntoVars(localVars, false);
             currentTextureConfig.MergeIntoVars(localVars, true);
 
-            // TODO: For this pipeline we should create a new file tracker cache
-
             var resolved = localVars.TryResolveString("{transform}", out var transform);
             if (resolved && transforms.GetTransformByName(transform, out var transformConfig))
             {
                 // Run the pipeline
                 Log.Information("Running pipeline '{transform}' on \"{currentInputFilePath}\"", transform, currentInputFilePath);
                 var pipeline = new Transform.Pipeline(processes, transformConfig, localVars);
-                pipeline.Execute(currentInputFilePath, dryRun, fileTrackerCache);
+
+                // For this pipeline create a new file tracker cache with initial data from the main file tracker cache
+                var localFileTrackerCache = new FileTracker.FileTrackerCache(fileTrackerCache);
+                pipeline.Execute(currentInputFilePath, dryRun, localFileTrackerCache);
             }
             else
             {

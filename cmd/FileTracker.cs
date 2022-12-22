@@ -35,6 +35,15 @@ public class FileTrackerCache
         HashAlgorithm = SHA1.Create();
     }
 
+    public FileTrackerCache(FileTrackerCache ftc)
+    {
+        HashAlgorithm = SHA1.Create();
+        foreach(var (key, value) in ftc.FileHashes)
+        {
+            FileHashes.Add(key, value);
+        }
+    }
+
     public string AddFile(Vars.Vars vars, string filePath, bool hashContent = false)
     {
         var resolvedFilePath = vars.ResolvePath(filePath);
