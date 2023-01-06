@@ -1,3 +1,5 @@
+using CliWrap;
+using CliWrap.Buffered;
 using Config;
 
 namespace Transform;
@@ -9,14 +11,6 @@ internal class Stage
     public List<Process> Processes { get; init; } // The processes in this stage
     public Vars.Vars OutputVars { get; init; } // The output variables for this stage (inputVars + all process vars)
     public string Name => Config.Name;
-
-    public Stage(TransformationStageDescriptor config, Vars.Vars inputVars)
-    {
-        Config = config;
-        InputVars = inputVars;
-        Processes = new List<Process>();
-        OutputVars = new Vars.Vars();
-    }
 
     public Stage(TransformationStageDescriptor config, Vars.Vars inputVars, List<Process> processes, Vars.Vars outputVars)
     {
@@ -43,7 +37,7 @@ internal class Process
         ProcessDescriptor = processDescriptor;
     }
 
-    public int Execute(bool changed, string stageName, bool dryRun)
+    public async Task<int> Execute(bool changed, string stageName, bool dryRun)
     {
         if (!changed)
         {
@@ -58,32 +52,46 @@ internal class Process
             return -1;
         }
 
-        if (dryRun)
-        {
-            Log.Information("Running process '{Name}' of \"{stageName}\" completed (dry-run)", Name, stageName);
-            return 0;
-        }
-
         if (ProcessDescriptor == null)
         {
             Log.Error("Process descriptor for process name '{Name}' not found", Name);
             return -1;
         }
 
-        var process = new System.Diagnostics.Process();
-        Vars.TryResolvePath(ProcessDescriptor.Executable, out var processFilename);
-        process.StartInfo.FileName = processFilename;
-        process.StartInfo.Arguments = $"{cmdline}";
-        process.StartInfo.UseShellExecute = false;
-        process.StartInfo.RedirectStandardOutput = true;
-        process.StartInfo.RedirectStandardError = true;
-        process.Start();
-        process.WaitForExit();
-        if (process.ExitCode != 0)
+        if (!Vars.TryResolvePath(ProcessDescriptor.Executable, out var processFilename))
         {
-            Log.Error("Running process '{Name}' of \"{stageName}\" failed with exit code {process.ExitCode}", Name, stageName, process.ExitCode);
-            return process.ExitCode;
+            Log.Error("Process executable for '{ProcessDescriptor.Executable}' process with name '{Name}' couldn't be resolved", Name);
+            return -1;
         }
+
+        if (dryRun)
+        {
+            Log.Information("Running process '{Name}' of \"{stageName}\" completed (dry-run)", Name, stageName);
+            return 0;
+        }
+
+        var result = await Cli.Wrap(processFilename)
+            .WithArguments(cmdline)
+            .WithWorkingDirectory(Path.GetDirectoryName(processFilename))
+            .ExecuteBufferedAsync();
+
+        // result contains:
+        // -- result.StandardOutput  (string)
+        // -- result.StandardError   (string)
+        // -- result.ExitCode        (int)
+        // -- result.StartTime       (DateTimeOffset)
+        // -- result.ExitTime        (DateTimeOffset)
+        // -- result.RunTime         (TimeSpan)
+
+        if (result.ExitCode != 0)
+        {
+            // TODO: we are dumping stderr to the log, but perhaps we should process it first?
+            Log.Error(result.StandardError);
+            Log.Error("Running process '{Name}' of \"{stageName}\" failed with exit code {result.ExitCode}", Name, stageName, result.ExitCode);
+            return result.ExitCode;
+        }
+        // TODO: we are dumping stdout to the log, but perhaps we should process it first?
+        Log.Information(result.StandardOutput);
         Log.Information("Running process '{Name}' of \"{stageName}\" completed", Name, stageName);
         return 0;
     }
@@ -196,6 +204,17 @@ internal class Pipeline
                     }
                 }
 
+                // Make sure that all 'folders' exist on disk
+                foreach (var file in unique)
+                {
+                    var dir = Path.GetDirectoryName(file);
+                    if (!Directory.Exists(dir) && dir != "")
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+                }
+
+                // Register the files under the name of this process
                 newTracker.Add(process.Vars, nodeName, files);
             }
         }
@@ -209,10 +228,10 @@ internal class Pipeline
                 var nodeName = GetNodeName(stage, process);
                 var identical = oldTracker.IsIdentical(nodeName, newTracker);
                 var result = process.Execute(!identical, stage.Name, dryRun);
-                if (result != 0)
+                if (result.Result != 0)
                 {
                     Log.Error("Error executing process '{process.Name}' of stage '{stage.Name}' for '{filePath}'", process.Name, stage.Name, filePath);
-                    exitCode = result;
+                    exitCode = result.Result;
                     break;
                 }
             }

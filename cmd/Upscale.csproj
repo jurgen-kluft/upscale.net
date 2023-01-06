@@ -15,6 +15,7 @@
     <Compile Include="Usings.cs" />
     <Compile Include="Vars.cs" />
     <Compile Include="serilog/**/*.cs" />
+    <Compile Include="process/**/*.cs" />
   </ItemGroup>
 
     <ItemGroup>

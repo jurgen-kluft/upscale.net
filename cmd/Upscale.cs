@@ -127,6 +127,7 @@ internal static class Program
 
     public static int Main(string[] args)
     {
+        // 'upscale' should be run with the working directory pointing to the cache folder that is specific to the nominator
         Log.Logger = new LoggerConfiguration()
             .WriteTo.Console()
             .WriteTo.File("upscale-.log", rollingInterval: RollingInterval.Day)

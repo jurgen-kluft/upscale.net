@@ -339,7 +339,7 @@ namespace Config
             TransformsList = jsonModel.TransformsList;
 
             // for each transformation process generate a 'file' that can be used to detect changes
-            // this will be file that should be used as a 'content hashing' file.
+            // this will be a file that will be used as a 'content hashing' file.
 
             foreach (var transform in TransformsList)
             {

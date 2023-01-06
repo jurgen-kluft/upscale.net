@@ -38,14 +38,6 @@ public class Vars
         }
     }
 
-    public string this[string key]
-    {
-        get => _vars[key];
-        set => _vars[key] = value;
-    }
-
-    public bool ContainsKey(string key) => _vars.ContainsKey(key);
-
     public bool Get(string name, out string value)
     {
         if (_vars.TryGetValue(name, out var v))
@@ -55,34 +47,6 @@ public class Vars
         }
 
         value = string.Empty;
-        return false;
-    }
-
-    public void GetInputs(List<string> items)
-    {
-        foreach (var (key,value) in _vars)
-        {
-            if (key.EndsWith(".input"))
-            {
-                items.Add(value);
-            }
-        }
-    }
-    public void GetOutputs(List<string> items)
-    {
-        foreach (var (key,value) in _vars)
-        {
-            if (key.EndsWith(".output"))
-            {
-                items.Add(value);
-            }
-        }
-    }
-
-    public bool Find(string name, [MaybeNullWhen(false)] out string value)
-    {
-        if (_vars.TryGetValue(name, out value)) return true;
-        value = null;
         return false;
     }
 
@@ -119,14 +83,6 @@ public class Vars
         }
     }
 
-    public void Merge(IReadOnlyDictionary<string, string> vars, bool overwrite = false)
-    {
-        foreach (var v in vars)
-        {
-            Add (v.Key, v.Value, overwrite);
-        }
-    }
-
     public static bool ContainsVars(string text)
     {
         var ctx = new Context(text);
@@ -158,12 +114,6 @@ public class Vars
         return true;
     }
 
-    public string ResolveString(string text)
-    {
-        var ok = TryResolveString(text, out var result);
-        return result;
-    }
-
     public bool TryResolvePath(string path, out string result)
     {
         var ok = TryResolveString(path, out var p);
@@ -178,7 +128,7 @@ public class Vars
         return result;
     }
 
-    public static List<string> ExtractAllVars(string text)
+    private static List<string> ExtractAllVars(string text)
     {
         // Extract all '{var}' variables from text
         var vars = new List<string>();
@@ -236,12 +186,22 @@ public class Vars
                                     return new Slice { Start = -1, End = -1 };
                                 case > 0:
                                     var keyBegin = _stack[--_stackTop];
-                                    return new Slice { Start = keyBegin + 1, End = keyEnd };
+                                    if (keyBegin >= 0)
+                                    {
+                                        return new Slice { Start = keyBegin + 1, End = keyEnd };
+                                    }
+
+                                    break;
                             }
 
                             break;
                         }
                     case '{':
+                        // invalid the outer one
+                        if (_stackTop > 0)
+                        {
+                            _stack[_stackTop - 1] = -1;
+                        }
                         _stack[_stackTop++] = _cursor;
                         break;
                 }
@@ -251,17 +211,6 @@ public class Vars
 
             return new Slice { Start = -1, End = -1 };
         }
-    }
-
-    public override string ToString()
-    {
-        var sb = new StringBuilder();
-        foreach (var kv in _vars)
-        {
-            sb.Append(kv.Key).Append('=').Append(kv.Value).Append(';');
-        }
-
-        return sb.ToString();
     }
 
 }
